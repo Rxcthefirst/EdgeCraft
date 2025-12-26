@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>EdgeCraft - RDF Example</title>
+  <style>
+    body {
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      margin: 0;
+      padding: 20px;
+      background: #f5f5f5;
+    }
+    .container {
+      max-width: 1200px;
+      margin: 0 auto;
+      background: white;
+      border-radius: 8px;
+      padding: 20px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    }
+    h1 {
+      margin-top: 0;
+      color: #333;
+    }
+    #graph {
+      width: 100%;
+      height: 600px;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      margin: 20px 0;
+    }
+    .controls {
+      display: flex;
+      gap: 10px;
+      margin-bottom: 20px;
+    }
+    button {
+      padding: 8px 16px;
+      background: #3498db;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 14px;
+    }
+    button:hover {
+      background: #2980b9;
+    }
+    .info {
+      background: #e8f4f8;
+      padding: 15px;
+      border-radius: 4px;
+      margin-top: 20px;
+      font-size: 14px;
+      color: #333;
+    }
+    .legend {
+      display: flex;
+      gap: 20px;
+      margin: 15px 0;
+    }
+    .legend-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .legend-color {
+      width: 20px;
+      height: 20px;
+      border-radius: 50%;
+      border: 2px solid #333;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>EdgeCraft - RDF Triple Store Visualization</h1>
+    
+    <div class="legend">
+      <div class="legend-item">
+        <div class="legend-color" style="background: #3498db;"></div>
+        <span>URI Resource</span>
+      </div>
+      <div class="legend-item">
+        <div class="legend-color" style="background: #f39c12; border-radius: 3px;"></div>
+        <span>Literal Value</span>
+      </div>
+      <div class="legend-item">
+        <div class="legend-color" style="background: #9b59b6;"></div>
+        <span>Blank Node</span>
+      </div>
+    </div>
+
+    <div class="controls">
+      <button onclick="queryKnows()">Query "knows" Relations</button>
+      <button onclick="queryNames()">Query Names</button>
+      <button onclick="addTriple()">Add Triple</button>
+      <button onclick="graph.setLayout({type: 'hierarchical'})">Hierarchical</button>
+      <button onclick="graph.fitView()">Fit View</button>
+    </div>
+
+    <div id="graph"></div>
+
+    <div class="info">
+      <strong>RDF Triple Store Example</strong>
+      <p>This example demonstrates RDF (Resource Description Framework) visualization with subject-predicate-object triples.</p>
+      <ul>
+        <li><strong>Blue circles:</strong> URI resources (http://example.org/...)</li>
+        <li><strong>Orange rectangles:</strong> Literal values (strings, numbers)</li>
+        <li><strong>Purple circles:</strong> Blank nodes</li>
+        <li>Edges represent predicates (relationships between resources)</li>
+      </ul>
+    </div>
+  </div>
+
+  <script type="module">
+    import { EdgeCraft } from '../dist/index.esm.js';
+
+    // RDF data - FOAF (Friend of a Friend) example
+    const data = {
+      nodes: [
+        // URI resources (people)
+        { id: 'alice', type: 'uri', value: 'http://example.org/alice' },
+        { id: 'bob', type: 'uri', value: 'http://example.org/bob' },
+        { id: 'charlie', type: 'uri', value: 'http://example.org/charlie' },
+        
+        // Literal values (names)
+        { id: 'name_alice', type: 'literal', value: 'Alice Johnson', datatype: 'xsd:string' },
+        { id: 'name_bob', type: 'literal', value: 'Bob Smith', datatype: 'xsd:string' },
+        { id: 'name_charlie', type: 'literal', value: 'Charlie Brown', datatype: 'xsd:string' },
+        
+        // Literal values (ages)
+        { id: 'age_alice', type: 'literal', value: '30', datatype: 'xsd:integer' },
+        { id: 'age_bob', type: 'literal', value: '35', datatype: 'xsd:integer' },
+        
+        // Email literals
+        { id: 'email_alice', type: 'literal', value: 'alice@example.org', datatype: 'xsd:string' },
+        { id: 'email_bob', type: 'literal', value: 'bob@example.org', datatype: 'xsd:string' }
+      ],
+      edges: [
+        // Social relationships
+        { id: 't1', subject: 'alice', predicate: 'foaf:knows', object: 'bob' },
+        { id: 't2', subject: 'bob', predicate: 'foaf:knows', object: 'charlie' },
+        { id: 't3', subject: 'alice', predicate: 'foaf:knows', object: 'charlie' },
+        
+        // Names
+        { id: 't4', subject: 'alice', predicate: 'foaf:name', object: 'name_alice' },
+        { id: 't5', subject: 'bob', predicate: 'foaf:name', object: 'name_bob' },
+        { id: 't6', subject: 'charlie', predicate: 'foaf:name', object: 'name_charlie' },
+        
+        // Ages
+        { id: 't7', subject: 'alice', predicate: 'foaf:age', object: 'age_alice' },
+        { id: 't8', subject: 'bob', predicate: 'foaf:age', object: 'age_bob' },
+        
+        // Emails
+        { id: 't9', subject: 'alice', predicate: 'foaf:mbox', object: 'email_alice' },
+        { id: 't10', subject: 'bob', predicate: 'foaf:mbox', object: 'email_bob' }
+      ]
+    };
+
+    // Create the graph
+    window.graph = new EdgeCraft({
+      container: '#graph',
+      data: data,
+      layout: { type: 'hierarchical', levelSpacing: 120, nodeSpacing: 80 },
+      nodeStyle: (node) => {
+        const styles = {
+          'uri': {
+            fill: '#3498db',
+            shape: 'circle',
+            radius: 25,
+            stroke: '#2980b9',
+            strokeWidth: 2
+          },
+          'literal': {
+            fill: '#f39c12',
+            shape: 'rectangle',
+            radius: 20,
+            stroke: '#e67e22',
+            strokeWidth: 2
+          },
+          'blank': {
+            fill: '#9b59b6',
+            shape: 'circle',
+            radius: 15,
+            stroke: '#8e44ad',
+            strokeWidth: 2
+          }
+        };
+
+        const style = styles[node.type] || styles['uri'];
+        
+        return {
+          ...style,
+          label: {
+            text: node.value.length > 30 ? node.value.substring(node.value.lastIndexOf('/') + 1) : node.value,
+            fontSize: 11,
+            color: '#333',
+            position: 'bottom'
+          }
+        };
+      },
+      edgeStyle: (edge) => {
+        // Different colors for different predicates
+        const predicateColors = {
+          'foaf:knows': '#e74c3c',
+          'foaf:name': '#2ecc71',
+          'foaf:age': '#f39c12',
+          'foaf:mbox': '#9b59b6'
+        };
+
+        return {
+          stroke: predicateColors[edge.predicate] || '#95a5a6',
+          strokeWidth: 2,
+          arrow: 'forward',
+          label: {
+            text: edge.predicate,
+            fontSize: 10,
+            color: '#333',
+            backgroundColor: 'rgba(255,255,255,0.9)'
+          }
+        };
+      }
+    });
+
+    // Query functions
+    window.queryKnows = () => {
+      const knowsTriples = graph.queryTriples(undefined, 'foaf:knows');
+      console.log('All "knows" relationships:', knowsTriples);
+      alert(`Found ${knowsTriples.length} "knows" relationships:\n\n` + 
+            knowsTriples.map(t => `${t.subject} knows ${t.object}`).join('\n'));
+    };
+
+    window.queryNames = () => {
+      const nameTriples = graph.queryTriples(undefined, 'foaf:name');
+      console.log('All names:', nameTriples);
+      const names = nameTriples.map(t => {
+        const literal = graph.getNode(t.object);
+        return `${t.subject}: ${literal.value}`;
+      });
+      alert(`Found ${nameTriples.length} names:\n\n` + names.join('\n'));
+    };
+
+    let tripleCounter = 11;
+    window.addTriple = () => {
+      // Add a new person and connect them
+      const newPersonId = `person_${tripleCounter}`;
+      const newNameId = `name_${tripleCounter}`;
+      
+      graph.addNode({
+        id: newPersonId,
+        type: 'uri',
+        value: `http://example.org/person${tripleCounter}`
+      });
+      
+      graph.addNode({
+        id: newNameId,
+        type: 'literal',
+        value: `Person ${tripleCounter}`,
+        datatype: 'xsd:string'
+      });
+      
+      // Add triples
+      graph.addTriple(newPersonId, 'foaf:name', newNameId);
+      graph.addTriple('alice', 'foaf:knows', newPersonId);
+      
+      tripleCounter++;
+      
+      graph.setLayout({ type: 'hierarchical', levelSpacing: 120, nodeSpacing: 80 });
+    };
+
+    // Event handlers
+    graph.on('node-click', (event) => {
+      const node = event.target;
+      alert(`Node Details:\n\nType: ${node.type}\nValue: ${node.value}\nID: ${node.id}`);
+    });
+  </script>
+</body>
+</html>

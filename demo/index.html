@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>EdgeCraft Demo</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="app">
+    <header>
+      <h1>🎨 EdgeCraft Demo</h1>
+      <p>Advanced Graph Visualization Library</p>
+    </header>
+
+    <div class="container">
+      <aside class="sidebar">
+        <div class="section">
+          <h3>Layouts</h3>
+          <div class="button-group">
+            <button id="layout-force" class="active">Force</button>
+            <button id="layout-hierarchical">Hierarchical</button>
+            <button id="layout-circular">Circular</button>
+            <button id="layout-grid">Grid</button>
+          </div>
+        </div>
+
+        <div class="section">
+          <h3>View Controls</h3>
+          <div class="button-group">
+            <button id="fit-view">Fit View</button>
+            <button id="center-view">Center</button>
+            <button id="zoom-in">Zoom In</button>
+            <button id="zoom-out">Zoom Out</button>
+            <button id="reset-zoom">Reset Zoom</button>
+          </div>
+        </div>
+
+        <div class="section">
+          <h3>Actions</h3>
+          <div class="button-group">
+            <button id="add-node">Add Node</button>
+            <button id="add-edge">Add Edge</button>
+            <button id="clear-selection">Clear Selection</button>
+            <button id="export-json">Export JSON</button>
+          </div>
+        </div>
+
+        <div class="section">
+          <h3>Examples</h3>
+          <div class="button-group">
+            <button id="load-social">Social Network</button>
+            <button id="load-rdf">RDF Example</button>
+            <button id="load-org">Org Chart</button>
+            <button id="load-dependencies">Dependencies</button>
+            <button id="load-knowledge">Knowledge Graph 🌟</button>
+          </div>
+        </div>
+
+        <div class="section">
+          <h3>Info</h3>
+          <div id="info" class="info-box">
+            <p><strong>Nodes:</strong> <span id="node-count">0</span></p>
+            <p><strong>Edges:</strong> <span id="edge-count">0</span></p>
+            <p><strong>Selected:</strong> <span id="selected-count">0</span></p>
+          </div>
+        </div>
+      </aside>
+
+      <main class="main-content">
+        <div id="graph-container"></div>
+        <div id="node-details" class="details-panel hidden">
+          <h4>Node Details</h4>
+          <div id="details-content"></div>
+          <button id="close-details">Close</button>
+        </div>
+      </main>
+    </div>
+  </div>
+
+  <script type="module" src="main.js"></script>
+</body>
+</html>

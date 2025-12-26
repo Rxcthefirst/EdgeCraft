@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>EdgeCraft - Basic Example</title>
+  <style>
+    body {
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      margin: 0;
+      padding: 20px;
+      background: #f5f5f5;
+    }
+    .container {
+      max-width: 1200px;
+      margin: 0 auto;
+      background: white;
+      border-radius: 8px;
+      padding: 20px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    }
+    h1 {
+      margin-top: 0;
+      color: #333;
+    }
+    #graph {
+      width: 100%;
+      height: 600px;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      margin: 20px 0;
+    }
+    .controls {
+      display: flex;
+      gap: 10px;
+      margin-bottom: 20px;
+    }
+    button {
+      padding: 8px 16px;
+      background: #4a90e2;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 14px;
+    }
+    button:hover {
+      background: #357abd;
+    }
+    .info {
+      background: #f0f8ff;
+      padding: 15px;
+      border-radius: 4px;
+      margin-top: 20px;
+      font-size: 14px;
+      color: #333;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>EdgeCraft - Basic Example</h1>
+    
+    <div class="controls">
+      <button onclick="changeLayout('force')">Force Layout</button>
+      <button onclick="changeLayout('hierarchical')">Hierarchical</button>
+      <button onclick="changeLayout('circular')">Circular</button>
+      <button onclick="changeLayout('grid')">Grid</button>
+      <button onclick="graph.fitView()">Fit View</button>
+      <button onclick="graph.zoomIn()">Zoom In</button>
+      <button onclick="graph.zoomOut()">Zoom Out</button>
+      <button onclick="addRandomNode()">Add Node</button>
+    </div>
+
+    <div id="graph"></div>
+
+    <div class="info">
+      <strong>Instructions:</strong>
+      <ul>
+        <li>Drag nodes to reposition them</li>
+        <li>Click nodes to select them</li>
+        <li>Use mouse wheel to zoom</li>
+        <li>Drag background to pan</li>
+        <li>Try different layouts using the buttons above</li>
+      </ul>
+    </div>
+  </div>
+
+  <script type="module">
+    import { EdgeCraft } from '../dist/index.esm.js';
+
+    // Sample data - a small social network
+    const data = {
+      nodes: [
+        { id: 1, labels: ['Person'], properties: { name: 'Alice', age: 30 } },
+        { id: 2, labels: ['Person'], properties: { name: 'Bob', age: 35 } },
+        { id: 3, labels: ['Person'], properties: { name: 'Charlie', age: 28 } },
+        { id: 4, labels: ['Company'], properties: { name: 'Tech Corp' } },
+        { id: 5, labels: ['Company'], properties: { name: 'StartupXYZ' } },
+        { id: 6, labels: ['Project'], properties: { name: 'EdgeCraft' } },
+        { id: 7, labels: ['Project'], properties: { name: 'GraphDB' } }
+      ],
+      edges: [
+        { id: 'e1', source: 1, target: 2, label: 'KNOWS', properties: { since: 2015 } },
+        { id: 'e2', source: 2, target: 3, label: 'KNOWS', properties: { since: 2018 } },
+        { id: 'e3', source: 1, target: 3, label: 'KNOWS', properties: { since: 2020 } },
+        { id: 'e4', source: 1, target: 4, label: 'WORKS_AT', properties: { role: 'Engineer' } },
+        { id: 'e5', source: 2, target: 4, label: 'WORKS_AT', properties: { role: 'Manager' } },
+        { id: 'e6', source: 3, target: 5, label: 'WORKS_AT', properties: { role: 'Founder' } },
+        { id: 'e7', source: 1, target: 6, label: 'CONTRIBUTES_TO', properties: {} },
+        { id: 'e8', source: 2, target: 7, label: 'CONTRIBUTES_TO', properties: {} }
+      ]
+    };
+
+    // Create the graph
+    window.graph = new EdgeCraft({
+      container: '#graph',
+      data: data,
+      layout: { type: 'force', iterations: 300 },
+      nodeStyle: (node) => {
+        const colors = {
+          'Person': '#4a90e2',
+          'Company': '#e74c3c',
+          'Project': '#2ecc71'
+        };
+        const label = node.labels[0];
+        return {
+          fill: colors[label] || '#95a5a6',
+          radius: 25,
+          stroke: '#2c3e50',
+          strokeWidth: 2,
+          label: {
+            text: node.properties.name,
+            fontSize: 12,
+            color: '#333',
+            position: 'bottom'
+          }
+        };
+      },
+      edgeStyle: (edge) => ({
+        stroke: '#95a5a6',
+        strokeWidth: 2,
+        arrow: 'forward',
+        label: {
+          text: edge.label,
+          fontSize: 10,
+          color: '#666',
+          backgroundColor: 'rgba(255,255,255,0.9)'
+        }
+      })
+    });
+
+    // Event handlers
+    graph.on('node-click', (event) => {
+      console.log('Clicked:', event.target);
+      alert(`Clicked: ${event.target.properties.name}`);
+    });
+
+    graph.on('node-mouseenter', (event) => {
+      console.log('Hovering:', event.target.properties.name);
+    });
+
+    // Global functions for buttons
+    window.changeLayout = (type) => {
+      graph.setLayout({ type });
+    };
+
+    let nodeCounter = 8;
+    window.addRandomNode = () => {
+      const types = ['Person', 'Company', 'Project'];
+      const type = types[Math.floor(Math.random() * types.length)];
+      const newNode = {
+        id: nodeCounter,
+        labels: [type],
+        properties: { name: `Node ${nodeCounter}` }
+      };
+      
+      graph.addNode(newNode);
+      
+      // Connect to a random existing node
+      const nodes = graph.getAllNodes();
+      const randomNode = nodes[Math.floor(Math.random() * (nodes.length - 1))];
+      
+      graph.addEdge({
+        id: `e${nodeCounter}`,
+        source: randomNode.id,
+        target: nodeCounter,
+        label: 'CONNECTED_TO',
+        properties: {}
+      });
+      
+      nodeCounter++;
+    };
+  </script>
+</body>
+</html>

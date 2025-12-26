@@ -1,0 +1,20 @@
+{
+  "name": "edgecraft-demo",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "edgecraft": "file:..",
+    "d3-selection": "^3.0.0",
+    "d3-zoom": "^3.0.0",
+    "d3-drag": "^3.0.0",
+    "d3-force": "^3.0.0"
+  },
+  "devDependencies": {
+    "vite": "^5.0.0"
+  }
+}

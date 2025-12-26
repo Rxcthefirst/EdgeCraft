@@ -1,0 +1,11 @@
+src/
+*.ts
+!*.d.ts
+tsconfig.json
+rollup.config.js
+.eslintrc.js
+.prettierrc
+jest.config.js
+tests/
+examples/
+.github/

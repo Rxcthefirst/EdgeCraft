@@ -16,7 +16,7 @@ export class ForceDirectedLayout implements LayoutEngine {
     const edges = graph.getAllEdges();
 
     // Initialize positions
-    nodes.forEach((node, index) => {
+    nodes.forEach((node) => {
       const existingPos = node.position;
       positions.set(node.id, existingPos || {
         x: Math.random() * 800,
@@ -193,7 +193,7 @@ export class HierarchicalLayout implements LayoutEngine {
 }
 
 export class CircularLayout implements LayoutEngine {
-  compute(graph: Graph, config: LayoutConfig): Map<string | number, Position> {
+  compute(graph: Graph, _config: LayoutConfig): Map<string | number, Position> {
     const positions = new Map<string | number, Position>();
     const nodes = graph.getAllNodes();
     const radius = 300;

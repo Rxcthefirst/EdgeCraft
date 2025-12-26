@@ -99,7 +99,9 @@ export interface NodeStyle {
   label?: {
     text?: string;
     fontSize?: number;
+    fontFamily?: string;
     color?: string;
+    backgroundColor?: string;
     position?: 'top' | 'bottom' | 'left' | 'right' | 'center';
   };
 }
@@ -112,6 +114,7 @@ export interface EdgeStyle {
   label?: {
     text?: string;
     fontSize?: number;
+    fontFamily?: string;
     color?: string;
     backgroundColor?: string;
   };
@@ -162,6 +165,13 @@ export type EventCallback = (event: GraphEvent) => void;
 // Main Configuration
 // ============================================================================
 
+export interface RendererConfig {
+  type?: 'svg' | 'canvas' | 'webgl' | 'auto';
+  pixelRatio?: number;
+  enableCache?: boolean;
+  enableDirtyRegions?: boolean;
+}
+
 export interface EdgeCraftConfig {
   container: HTMLElement | string;
   data?: GraphData;
@@ -169,6 +179,7 @@ export interface EdgeCraftConfig {
   interaction?: InteractionConfig;
   nodeStyle?: NodeStyle | StyleFunction<GraphNode>;
   edgeStyle?: EdgeStyle | StyleFunction<GraphEdge>;
+  renderer?: RendererConfig;
   width?: number;
   height?: number;
   backgroundColor?: string;

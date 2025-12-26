@@ -3,7 +3,8 @@
  */
 
 import { Graph } from './core/Graph';
-import { Renderer } from './renderer/Renderer';
+import { IRenderer } from './renderer/IRenderer';
+import { RendererFactory } from './renderer/RendererFactory';
 import { InteractionManager } from './interaction/InteractionManager';
 import { getLayoutEngine } from './layout/LayoutEngine';
 import {
@@ -16,15 +17,12 @@ import {
   LayoutConfig,
   Position,
   EventCallback,
-  LPGNode,
-  LPGEdge,
-  RDFNode,
   RDFTriple,
 } from './types';
 
 export class EdgeCraft {
   private graph: Graph;
-  private renderer: Renderer;
+  private renderer: IRenderer;
   private interactionManager: InteractionManager;
   private config: EdgeCraftConfig;
   private positions: Map<string | number, Position>;
@@ -36,27 +34,56 @@ export class EdgeCraft {
     this.graph = new Graph(config.data);
     this.positions = new Map();
 
-    // Initialize renderer
+    // Initialize renderer (Canvas or WebGL based on node count)
     const width = config.width || this.container.clientWidth || 800;
     const height = config.height || this.container.clientHeight || 600;
-    const backgroundColor = config.backgroundColor || '#ffffff';
+    const nodeCount = config.data?.nodes?.length || 0;
 
-    this.renderer = new Renderer(this.container, width, height, backgroundColor);
+    // Use Canvas/WebGL renderer system with auto-detection
+    this.renderer = RendererFactory.create({
+      type: config.renderer?.type || 'auto',
+      container: this.container,
+      width,
+      height,
+      pixelRatio: config.renderer?.pixelRatio,
+      enableCache: config.renderer?.enableCache,
+      enableDirtyRegions: config.renderer?.enableDirtyRegions
+    }, nodeCount);
+    
+    this.renderer.initialize();
+    
+    // Log which renderer was chosen
+    const rendererType = this.renderer.getType();
+    console.log(`EdgeCraft: Using ${rendererType.toUpperCase()} renderer (${nodeCount} nodes)`);
 
     // Compute layout and render
     this.computeLayout();
     this.render();
 
-    // Initialize interaction manager
+    // Get nodes as a Map for interaction manager
+    const nodesMap = new Map<string | number, GraphNode>();
+    const allNodes = this.graph.getAllNodes();
+    allNodes.forEach(node => nodesMap.set(node.id, node));
+
+    // Initialize interaction manager with nodes map
     this.interactionManager = new InteractionManager(
-      this.graph,
       this.renderer,
       this.positions,
+      nodesMap,
+      this.graph,
       config.interaction || {}
     );
 
     // Fit view after initial render
-    setTimeout(() => this.interactionManager.fitView(), 100);
+    setTimeout(() => {
+      this.interactionManager.fitView();
+      
+      // Listen for selection changes to trigger re-render with updated styles
+      // Do this after initialization is complete to avoid premature renders
+      this.interactionManager.on('selection-changed' as any, () => {
+        this.render();
+      });
+    }, 100);
   }
 
   // ============================================================================
@@ -67,6 +94,15 @@ export class EdgeCraft {
     this.graph.setData(data);
     this.computeLayout();
     this.render();
+    
+    // Update interaction manager with new data
+    const nodesMap = new Map<string | number, GraphNode>();
+    this.graph.getAllNodes().forEach(node => nodesMap.set(node.id, node));
+    const edgesMap = new Map<string | number, GraphEdge>();
+    this.graph.getAllEdges().forEach(edge => edgesMap.set(edge.id, edge));
+    
+    this.interactionManager.updateNodes(nodesMap);
+    this.interactionManager.updateEdges(edgesMap);
     this.interactionManager.updatePositions(this.positions);
   }
 
@@ -78,6 +114,11 @@ export class EdgeCraft {
     this.graph.addNode(node);
     this.computeLayout();
     this.render();
+    
+    // Update interaction manager with new node
+    const nodesMap = new Map<string | number, GraphNode>();
+    this.graph.getAllNodes().forEach(n => nodesMap.set(n.id, n));
+    this.interactionManager.updateNodes(nodesMap);
     this.interactionManager.updatePositions(this.positions);
   }
 
@@ -126,10 +167,42 @@ export class EdgeCraft {
   // ============================================================================
 
   render(): void {
-    const nodeStyle = this.config.nodeStyle || this.getDefaultNodeStyle();
-    const edgeStyle = this.config.edgeStyle || this.getDefaultEdgeStyle();
+    const baseNodeStyle = this.config.nodeStyle || this.getDefaultNodeStyle();
+    const baseEdgeStyle = this.config.edgeStyle || this.getDefaultEdgeStyle();
 
-    this.renderer.render(this.graph, this.positions, nodeStyle, edgeStyle);
+    // Canvas/WebGL renderers use incremental updates
+    // Clear and rebuild from graph data
+    this.renderer.clear();
+    
+    // Add all nodes
+    this.graph.getAllNodes().forEach((node) => {
+      // Add position to node object
+      const pos = this.positions.get(node.id);
+      if (pos) {
+        (node as any).x = pos.x;
+        (node as any).y = pos.y;
+      }
+      
+      // Compute style (handle StyleFunction)
+      const nodeStyle = typeof baseNodeStyle === 'function'
+        ? { ...this.getDefaultNodeStyle(), ...baseNodeStyle(node) as NodeStyle }
+        : baseNodeStyle;
+      
+      this.renderer.addNode(node, nodeStyle);
+    });
+    
+    // Add all edges
+    this.graph.getAllEdges().forEach((edge) => {
+      // Compute style (handle StyleFunction)
+      const edgeStyle = typeof baseEdgeStyle === 'function'
+        ? { ...this.getDefaultEdgeStyle(), ...baseEdgeStyle(edge) as EdgeStyle }
+        : baseEdgeStyle;
+      
+      this.renderer.addEdge(edge, edgeStyle);
+    });
+    
+    // Trigger render
+    this.renderer.render();
   }
 
   private getDefaultNodeStyle(): NodeStyle {
@@ -171,8 +244,16 @@ export class EdgeCraft {
     return this.interactionManager.getSelectedNodes();
   }
 
+  getSelectedEdges(): (string | number)[] {
+    return this.interactionManager.getSelectedEdges();
+  }
+
   selectNode(nodeId: string | number): void {
     this.interactionManager.selectNode(nodeId);
+  }
+
+  selectEdge(edgeId: string | number): void {
+    this.interactionManager.selectEdge(edgeId);
   }
 
   clearSelection(): void {
@@ -267,7 +348,7 @@ export class EdgeCraft {
   }
 
   exportSVG(): string {
-    return this.renderer.getSVG().outerHTML;
+    throw new Error('exportSVG is not supported with Canvas/WebGL renderers. Use exportPNG() instead.');
   }
 
   // ============================================================================
@@ -275,10 +356,8 @@ export class EdgeCraft {
   // ============================================================================
 
   destroy(): void {
-    const svg = this.renderer.getSVG();
-    if (svg.parentNode) {
-      svg.parentNode.removeChild(svg);
-    }
+    // IRenderer has dispose method
+    this.renderer.dispose();
   }
 
   // ============================================================================

@@ -280,4 +280,41 @@ const knowledgeGraphData = {
   ]
 };
 
-export { socialNetworkData, rdfData, orgChartData, dependencyData, knowledgeGraphData };
+// Large graph for testing Canvas renderer performance (1000 nodes)
+const largeGraphData = {
+  nodes: [],
+  edges: []
+};
+
+// Generate 1000 nodes in clusters
+for (let i = 0; i < 1000; i++) {
+  const cluster = Math.floor(i / 100);
+  largeGraphData.nodes.push({
+    id: i,
+    labels: ['Node'],
+    properties: {
+      name: `Node ${i}`,
+      cluster: cluster,
+      value: Math.random() * 100
+    }
+  });
+}
+
+// Generate edges - each node connects to 2-5 other nodes
+for (let i = 0; i < 1000; i++) {
+  const edgeCount = 2 + Math.floor(Math.random() * 4);
+  for (let j = 0; j < edgeCount; j++) {
+    const target = Math.floor(Math.random() * 1000);
+    if (target !== i) {
+      largeGraphData.edges.push({
+        id: `e${i}_${j}`,
+        source: i,
+        target: target,
+        label: 'CONNECTS',
+        properties: { weight: Math.random() }
+      });
+    }
+  }
+}
+
+export { socialNetworkData, rdfData, orgChartData, dependencyData, knowledgeGraphData, largeGraphData };

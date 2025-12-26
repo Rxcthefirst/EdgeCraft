@@ -54,7 +54,23 @@
             <button id="load-org">Org Chart</button>
             <button id="load-dependencies">Dependencies</button>
             <button id="load-knowledge">Knowledge Graph 🌟</button>
+            <button id="load-large" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white;">Large Graph (1000) 🚀</button>
           </div>
+        </div>
+
+        <div class="section">
+          <h3>Renderer</h3>
+          <div class="button-group">
+            <button id="renderer-auto" class="active">Auto</button>
+            <button id="renderer-canvas">Canvas</button>
+            <button id="renderer-webgl">WebGL</button>
+          </div>
+          <p style="font-size: 11px; color: #666; margin-top: 8px;">
+            <span id="renderer-info">Current: Canvas</span>
+          </p>
+          <p style="font-size: 10px; color: #999; margin-top: 4px;">
+            Auto: Canvas &lt; 5000 nodes, WebGL 5000+
+          </p>
         </div>
 
         <div class="section">
@@ -63,6 +79,7 @@
             <p><strong>Nodes:</strong> <span id="node-count">0</span></p>
             <p><strong>Edges:</strong> <span id="edge-count">0</span></p>
             <p><strong>Selected:</strong> <span id="selected-count">0</span></p>
+            <p><strong>FPS:</strong> <span id="fps-count">--</span></p>
           </div>
         </div>
       </aside>

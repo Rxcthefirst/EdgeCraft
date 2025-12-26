@@ -1,9 +1,10 @@
 import { EdgeCraft } from 'edgecraft';
-import { socialNetworkData, rdfData, orgChartData, dependencyData, knowledgeGraphData } from './data.js';
+import { socialNetworkData, rdfData, orgChartData, dependencyData, knowledgeGraphData, largeGraphData } from './data.js';
 
 // Global graph instance
 let graph = null;
 let nodeCounter = 1;
+let currentRenderer = 'auto'; // 'auto', 'canvas', 'webgl'
 
 // Initialize the application
 function init() {
@@ -12,6 +13,7 @@ function init() {
   setupViewControls();
   setupActionButtons();
   setupExampleButtons();
+  setupRendererControls();
   
   // Create initial graph with social network data
   // (this will also setup graph events)
@@ -19,7 +21,7 @@ function init() {
 }
 
 // Create graph instance
-function createGraph(data) {
+function createGraph(data, rendererOverride) {
   // Destroy existing graph if any
   if (graph) {
     graph.destroy();
@@ -28,11 +30,16 @@ function createGraph(data) {
   // Assign IDs if needed
   nodeCounter = Math.max(...data.nodes.map(n => typeof n.id === 'number' ? n.id : 0)) + 1;
   
+  // Determine renderer configuration
+  const rendererType = rendererOverride || currentRenderer;
+  const rendererConfig = rendererType === 'auto' ? undefined : { type: rendererType };
+  
   // Create new graph
   graph = new EdgeCraft({
     container: '#graph-container',
     data: data,
     layout: { type: 'force', iterations: 300 },
+    renderer: rendererConfig,
     nodeStyle: getNodeStyle,
     edgeStyle: getEdgeStyle,
     interaction: {
@@ -44,14 +51,33 @@ function createGraph(data) {
     }
   });
   
+  // Update renderer info display
+  updateRendererInfo();
+  
   // Setup graph event listeners
   setupGraphEvents();
+  
+  // Start FPS monitoring if canvas renderer
+  startFPSMonitoring();
   
   updateInfo();
 }
 
+
 // Dynamic node styling
 function getNodeStyle(node) {
+  // Check if node is selected (works for both LPGNode and RDFNode)
+  const isSelected = node.properties?.selected || node.selected;
+  
+  // Debug: log when node is selected
+  if (isSelected) {
+    console.log('[Demo] getNodeStyle called for selected node:', node.id, { 
+      propertiesSelected: node.properties?.selected,
+      selected: node.selected,
+      properties: node.properties 
+    });
+  }
+  
   // Different colors for different node types
   const typeColors = {
     'Person': '#667eea',
@@ -59,11 +85,20 @@ function getNodeStyle(node) {
     'Project': '#2ecc71',
     'Department': '#f39c12',
     'Package': '#9b59b6',
-    'Module': '#3498db'
+    'Module': '#3498db',
+    'Node': '#3498db' // For large graph nodes
   };
   
   const label = node.labels?.[0] || 'Default';
-  const fill = typeColors[label] || '#95a5a6';
+  
+  // Color by cluster for large graphs
+  let fill;
+  if (label === 'Node' && node.properties?.cluster !== undefined) {
+    const clusterColors = ['#e74c3c', '#3498db', '#2ecc71', '#f39c12', '#9b59b6', '#1abc9c', '#e67e22', '#95a5a6', '#34495e', '#16a085'];
+    fill = clusterColors[node.properties.cluster % clusterColors.length];
+  } else {
+    fill = typeColors[label] || '#95a5a6';
+  }
   
   // Size based on connections (safely check if graph exists)
   let degree = 0;
@@ -77,10 +112,10 @@ function getNodeStyle(node) {
   const radius = 20 + Math.min(degree * 3, 20);
   
   return {
-    fill,
+    fill: isSelected ? adjustBrightness(fill, 1.3) : fill,
     radius,
-    stroke: '#2c3e50',
-    strokeWidth: 2,
+    stroke: isSelected ? '#FFD700' : '#2c3e50',
+    strokeWidth: isSelected ? 4 : 2,
     shape: label === 'Company' || label === 'Package' ? 'rectangle' : 'circle',
     label: {
       text: node.properties?.name || node.value || String(node.id),
@@ -89,6 +124,18 @@ function getNodeStyle(node) {
       position: 'bottom'
     }
   };
+}
+
+// Helper function to adjust color brightness
+function adjustBrightness(color, factor) {
+  if (!color.startsWith('#')) return color;
+  
+  const hex = color.slice(1);
+  const r = Math.min(255, Math.round(parseInt(hex.slice(0, 2), 16) * factor));
+  const g = Math.min(255, Math.round(parseInt(hex.slice(2, 4), 16) * factor));
+  const b = Math.min(255, Math.round(parseInt(hex.slice(4, 6), 16) * factor));
+  
+  return '#' + r.toString(16).padStart(2, '0') + g.toString(16).padStart(2, '0') + b.toString(16).padStart(2, '0');
 }
 
 // Edge styling
@@ -105,15 +152,18 @@ function getEdgeStyle(edge) {
   const label = edge.label || edge.predicate || '';
   const stroke = relationColors[label] || '#95a5a6';
   
+  // Check if edge is selected (works for both LPG and RDF edges)
+  const isSelected = edge.properties?.selected || edge.selected;
+  
   return {
-    stroke,
-    strokeWidth: 2,
+    stroke: isSelected ? '#FFD700' : stroke,
+    strokeWidth: isSelected ? 4 : 2,
     arrow: 'forward',
     label: {
       text: label,
-      fontSize: 10,
-      color: '#666',
-      backgroundColor: 'rgba(255,255,255,0.9)'
+      fontSize: isSelected ? 11 : 10,
+      color: isSelected ? '#000' : '#666',
+      backgroundColor: isSelected ? 'rgba(255,215,0,0.3)' : 'rgba(255,255,255,0.9)'
     }
   };
 }
@@ -194,6 +244,51 @@ function setupExampleButtons() {
   document.getElementById('load-knowledge').addEventListener('click', () => {
     createGraphWithComplexStyling(knowledgeGraphData);
   });
+  
+  document.getElementById('load-large').addEventListener('click', () => {
+    createGraph(largeGraphData);
+  });
+}
+
+// Renderer controls
+function setupRendererControls() {
+  ['auto', 'canvas', 'webgl'].forEach(type => {
+    document.getElementById(`renderer-${type}`).addEventListener('click', function() {
+      // Update active state
+      document.querySelectorAll('[id^="renderer-"]').forEach(btn => btn.classList.remove('active'));
+      this.classList.add('active');
+      
+      // Set renderer and recreate graph
+      currentRenderer = type;
+      const currentData = graph.getData();
+      createGraph(currentData);
+    });
+  });
+}
+
+// Update renderer info display
+function updateRendererInfo() {
+  const info = document.getElementById('renderer-info');
+  if (graph && graph.renderer) {
+    const actualType = graph.renderer.getType ? graph.renderer.getType() : 'SVG';
+    const nodeCount = graph.getAllNodes().length;
+    info.textContent = `Active: ${actualType.toUpperCase()} (${nodeCount} nodes)`;
+  }
+}
+
+// FPS monitoring
+let fpsInterval;
+function startFPSMonitoring() {
+  if (fpsInterval) clearInterval(fpsInterval);
+  
+  fpsInterval = setInterval(() => {
+    if (graph && graph.renderer && graph.renderer.getMetrics) {
+      const metrics = graph.renderer.getMetrics();
+      document.getElementById('fps-count').textContent = metrics.fps || '--';
+    } else {
+      document.getElementById('fps-count').textContent = '--';
+    }
+  }, 500);
 }
 
 // Graph events
@@ -201,6 +296,12 @@ function setupGraphEvents() {
   // Node click - show details
   graph.on('node-click', (event) => {
     showNodeDetails(event.target);
+    updateInfo();
+  });
+  
+  // Edge click - show edge details
+  graph.on('edge-click', (event) => {
+    showEdgeDetails(event.target);
     updateInfo();
   });
   
@@ -213,6 +314,31 @@ function setupGraphEvents() {
   graph.on('background-click', () => {
     hideNodeDetails();
     updateInfo();
+  });
+  
+  // Toggle details panel when clicking on selected count
+  const selectedCountElement = document.getElementById('selected-count').parentElement;
+  selectedCountElement.style.cursor = 'pointer';
+  selectedCountElement.title = 'Click to show selection details';
+  selectedCountElement.addEventListener('click', () => {
+    const selectedNodes = graph.getSelectedNodes();
+    const selectedEdges = graph.getSelectedEdges();
+    
+    if (selectedNodes.length > 0) {
+      const nodeId = selectedNodes[0];
+      const nodeData = graph.getData().nodes.find(n => n.id === nodeId);
+      if (nodeData) {
+        showNodeDetails(nodeData);
+      }
+    } else if (selectedEdges.length > 0) {
+      const edgeId = selectedEdges[0];
+      const edgeData = graph.getData().edges.find(e => e.id === edgeId);
+      if (edgeData) {
+        showEdgeDetails(edgeData);
+      }
+    } else {
+      hideNodeDetails();
+    }
   });
 }
 
@@ -254,6 +380,42 @@ function showNodeDetails(node) {
 // Hide node details panel
 function hideNodeDetails() {
   document.getElementById('node-details').classList.add('hidden');
+}
+
+// Show edge details panel
+function showEdgeDetails(edge) {
+  const panel = document.getElementById('node-details');
+  const content = document.getElementById('details-content');
+  
+  let html = `<h4>Edge Details</h4>`;
+  html += `<p><strong>ID:</strong> ${edge.id}</p>`;
+  
+  if (edge.label) {
+    html += `<p><strong>Label:</strong> ${edge.label}</p>`;
+  }
+  
+  if (edge.predicate) {
+    html += `<p><strong>Predicate:</strong> ${edge.predicate}</p>`;
+  }
+  
+  const sourceId = edge.source || edge.subject;
+  const targetId = edge.target || edge.object;
+  html += `<p><strong>Source:</strong> ${sourceId}</p>`;
+  html += `<p><strong>Target:</strong> ${targetId}</p>`;
+  
+  if (edge.properties) {
+    html += `<p><strong>Properties:</strong></p>`;
+    Object.entries(edge.properties).forEach(([key, value]) => {
+      if (key !== 'selected') {
+        html += `<p style="margin-left: 15px;">• ${key}: ${value}</p>`;
+      }
+    });
+  }
+  
+  content.innerHTML = html;
+  panel.classList.remove('hidden');
+  
+  document.getElementById('close-details').onclick = hideNodeDetails;
 }
 
 // Add random node
@@ -332,7 +494,8 @@ function exportJSON() {
 function updateInfo() {
   document.getElementById('node-count').textContent = graph.getAllNodes().length;
   document.getElementById('edge-count').textContent = graph.getAllEdges().length;
-  document.getElementById('selected-count').textContent = graph.getSelectedNodes().length;
+  const selectedCount = graph.getSelectedNodes().length + graph.getSelectedEdges().length;
+  document.getElementById('selected-count').textContent = selectedCount;
 }
 
 // Initialize on load

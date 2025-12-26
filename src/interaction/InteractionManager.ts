@@ -24,6 +24,7 @@ export class InteractionManager {
   private graph: Graph;
   private draggedNode: string | number | null;
   private dragStartPos: Position | null;
+  private hasDragged: boolean = false;
   private hoveredNode: string | number | null;
   private hoveredEdge: string | number | null;
   private currentTransform: { x: number; y: number; scale: number };
@@ -127,6 +128,7 @@ export class InteractionManager {
     if (node && this.config.draggable) {
       this.draggedNode = node.id;
       this.dragStartPos = worldPos;
+      this.hasDragged = false; // Reset drag flag
       
       // Prevent zoom/pan from interfering
       event.preventDefault();
@@ -150,33 +152,79 @@ export class InteractionManager {
       event.preventDefault();
       event.stopPropagation();
       
-      const pos = this.positions.get(this.draggedNode);
-      const node = this.nodes.get(this.draggedNode);
+      // Calculate drag delta
+      const dx = worldPos.x - this.dragStartPos.x;
+      const dy = worldPos.y - this.dragStartPos.y;
       
-      if (pos && node) {
-        // Update position in positions Map
-        pos.x = worldPos.x;
-        pos.y = worldPos.y;
+      // Mark as dragged if moved more than 2 pixels (prevents accidental selection changes)
+      if (!this.hasDragged && (Math.abs(dx) > 2 || Math.abs(dy) > 2)) {
+        this.hasDragged = true;
+      }
+      
+      // Determine which nodes to move
+      const nodesToMove = new Set<string | number>();
+      
+      // If dragged node is selected and there are multiple selections, move all selected nodes
+      if (this.selectedNodes.has(this.draggedNode) && this.selectedNodes.size > 1) {
+        this.selectedNodes.forEach(nodeId => nodesToMove.add(nodeId));
+      } else {
+        // Otherwise just move the single dragged node
+        nodesToMove.add(this.draggedNode);
+      }
+      
+      // Move all nodes in the set
+      nodesToMove.forEach(nodeId => {
+        const pos = this.positions.get(nodeId);
+        const node = this.nodes.get(nodeId);
         
-        // Update node object
-        (node as any).x = worldPos.x;
-        (node as any).y = worldPos.y;
-        
-        // Update the renderer's internal node data
-        this.renderer.updateNode(this.draggedNode, { 
-          ...node,
-          position: { x: worldPos.x, y: worldPos.y }
-        } as any);
-        
-        // Update all connected edges
-        const connectedEdges = this.graph.getConnectedEdges(this.draggedNode);
-        connectedEdges.forEach(edge => {
-          this.renderer.updateEdge(edge.id, edge);
-        });
-        
-        // Re-render immediately
-        this.renderer.render();
-        
+        if (pos && node) {
+          // Get original position before this drag started
+          const originalPos = (node as any).originalDragPos || { 
+            x: pos.x - dx, 
+            y: pos.y - dy 
+          };
+          
+          // Store original position for subsequent moves
+          if (!(node as any).originalDragPos) {
+            (node as any).originalDragPos = { x: originalPos.x, y: originalPos.y };
+          }
+          
+          // Update position relative to original position
+          pos.x = originalPos.x + dx;
+          pos.y = originalPos.y + dy;
+          
+          // Update node object
+          (node as any).x = pos.x;
+          (node as any).y = pos.y;
+          
+          // CRITICAL: Update spatial index in Graph
+          this.graph.updateNode(nodeId, { 
+            x: pos.x, 
+            y: pos.y 
+          } as any);
+          
+          // Update the renderer's internal node data
+          this.renderer.updateNode(nodeId, { 
+            ...node,
+            position: { x: pos.x, y: pos.y }
+          } as any);
+          
+          // Update all connected edges (both renderer and spatial index)
+          const connectedEdges = this.graph.getConnectedEdges(nodeId);
+          connectedEdges.forEach(edge => {
+            // Update edge in spatial index with new node positions
+            this.graph.updateEdge(edge.id, {});
+            // Update edge in renderer
+            this.renderer.updateEdge(edge.id, edge);
+          });
+        }
+      });
+      
+      // Re-render immediately
+      this.renderer.render();
+      
+      const node = this.nodes.get(this.draggedNode);
+      if (node) {
         this.emit({
           type: 'node-drag',
           target: node,
@@ -230,6 +278,11 @@ export class InteractionManager {
       const mousePos = this.getMousePosition(event);
       const node = this.nodes.get(this.draggedNode) || null;
       
+      // Clear temporary drag positions from all nodes
+      this.nodes.forEach(n => {
+        delete (n as any).originalDragPos;
+      });
+      
       this.emit({
         type: 'node-dragend',
         target: node,
@@ -240,9 +293,20 @@ export class InteractionManager {
       this.draggedNode = null;
       this.dragStartPos = null;
     }
+    
+    // Always reset hasDragged on mouseup
+    // Use setTimeout to allow the click handler to still detect drag-click vs normal-click
+    setTimeout(() => {
+      this.hasDragged = false;
+    }, 10);
   }
 
   private handleClick(event: MouseEvent): void {
+    // Ignore click if we just finished dragging
+    if (this.hasDragged) {
+      return;
+    }
+    
     const mousePos = this.getMousePosition(event);
     const worldPos = this.screenToWorld(mousePos);
     const node = this.getNodeAtPosition(worldPos);
@@ -254,6 +318,11 @@ export class InteractionManager {
       shiftKey: event.shiftKey,
       multiSelectEnabled: this.config.multiSelect
     });
+    
+    // Show hitboxes if enabled
+    if (this.config.showHitboxes) {
+      this.showHitboxForClick(node, edge);
+    }
     
     if (node && this.config.selectable) {
       event.stopPropagation();
@@ -306,13 +375,16 @@ export class InteractionManager {
   }
 
   private getNodeAtPosition(worldPos: Position): GraphNode | null {
-    // Check all nodes for hit test
-    for (const [id, node] of this.nodes.entries()) {
-      const pos = this.positions.get(id);
+    // Use spatial index for O(log n) lookup instead of O(n)
+    const candidates = this.graph.getNodesNearPoint(worldPos, 50);
+    
+    // Check only candidate nodes for precise hit test
+    for (const node of candidates) {
+      const pos = this.positions.get(node.id);
       if (!pos) continue;
       
-      // Get radius from node properties (LPGNode has properties, RDFNode doesn't)
-      let radius = 30; // default to match renderer
+      // Get radius from node properties
+      let radius = 30; // default
       if ('properties' in node && node.properties) {
         radius = (node.properties as any).radius || 30;
       }
@@ -340,7 +412,10 @@ export class InteractionManager {
   private getEdgeAtPosition(worldPos: Position): GraphEdge | null {
     const threshold = 15 / this.currentTransform.scale; // Larger threshold for easier selection
     
-    for (const [_edgeId, edge] of this.edges.entries()) {
+    // Use spatial index for O(log n) lookup
+    const candidates = this.graph.getEdgesNearPoint(worldPos, threshold);
+    
+    for (const edge of candidates) {
       const sourceId = 'source' in edge ? edge.source : (edge as any).subject;
       const targetId = 'target' in edge ? edge.target : (edge as any).object;
       
@@ -364,8 +439,18 @@ export class InteractionManager {
         }
       }
       
-      // Calculate distance from point to line segment
-      const dist = this.distanceToLineSegment(worldPos, sourcePos, targetPos);
+      // Get edge style to check if it's curved
+      const edgeStyle = 'properties' in edge ? (edge as any).properties?.curveStyle : undefined;
+      let dist: number;
+      
+      if (edgeStyle === 'bezier') {
+        // Calculate control point for bezier curve
+        const controlPoint = this.calculateBezierControlPoint(sourcePos, targetPos);
+        dist = this.distanceToQuadraticBezier(worldPos, sourcePos, controlPoint, targetPos);
+      } else {
+        // Straight line
+        dist = this.distanceToLineSegment(worldPos, sourcePos, targetPos);
+      }
       
       if (dist <= threshold) {
         return edge;
@@ -373,6 +458,61 @@ export class InteractionManager {
     }
     
     return null;
+  }
+
+  private calculateBezierControlPoint(start: Position, end: Position): Position {
+    const midX = (start.x + end.x) / 2;
+    const midY = (start.y + end.y) / 2;
+    
+    // Perpendicular vector
+    const dx = end.x - start.x;
+    const dy = end.y - start.y;
+    const length = Math.sqrt(dx * dx + dy * dy);
+    
+    if (length === 0) return { x: midX, y: midY };
+    
+    // Normalize perpendicular
+    const perpX = -dy / length;
+    const perpY = dx / length;
+    
+    // Offset control point perpendicular to the line (30% of edge length)
+    const offset = length * 0.3;
+    
+    return {
+      x: midX + perpX * offset,
+      y: midY + perpY * offset
+    };
+  }
+
+  private distanceToQuadraticBezier(
+    point: Position,
+    start: Position,
+    control: Position,
+    end: Position,
+    samples: number = 20
+  ): number {
+    let minDist = Infinity;
+    
+    // Sample points along the curve
+    for (let i = 0; i <= samples; i++) {
+      const t = i / samples;
+      const u = 1 - t;
+      const tt = t * t;
+      const uu = u * u;
+      
+      const curveX = uu * start.x + 2 * u * t * control.x + tt * end.x;
+      const curveY = uu * start.y + 2 * u * t * control.y + tt * end.y;
+      
+      const dx = point.x - curveX;
+      const dy = point.y - curveY;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      
+      if (dist < minDist) {
+        minDist = dist;
+      }
+    }
+    
+    return minDist;
   }
 
   private distanceToLineSegment(point: Position, lineStart: Position, lineEnd: Position): number {
@@ -505,6 +645,9 @@ export class InteractionManager {
     console.log('[InteractionManager] Triggering render...');
     this.emit({
       type: 'selection-changed' as any,
+      target: node,
+      position: { x: 0, y: 0 },
+      originalEvent: new Event('selection-changed'),
       data: { nodeId, selected: highlight }
     });
   }
@@ -540,6 +683,9 @@ export class InteractionManager {
     // Trigger re-render
     this.emit({
       type: 'selection-changed' as any,
+      target: edge,
+      position: { x: 0, y: 0 },
+      originalEvent: new Event('selection-changed'),
       data: { edgeId, selected: highlight }
     });
   }
@@ -656,5 +802,81 @@ export class InteractionManager {
 
   getSelectedEdges(): (string | number)[] {
     return Array.from(this.selectedEdges);
+  }
+
+  /**
+   * Show hitbox visualization for clicked node or edge
+   */
+  private showHitboxForClick(node: GraphNode | null, edge: GraphEdge | null): void {
+    // Clear previous hitbox
+    if ('clearOverlay' in this.renderer) {
+      (this.renderer as any).clearOverlay();
+    }
+
+    if (node) {
+      // Show node hitbox
+      const pos = this.positions.get(node.id);
+      if (pos && 'drawHitbox' in this.renderer) {
+        const radius = 60; // Same as spatial index bounds
+        (this.renderer as any).drawHitbox({
+          x: pos.x - radius,
+          y: pos.y - radius,
+          width: radius * 2,
+          height: radius * 2
+        }, 'rgba(0, 150, 255, 0.4)');
+      }
+    } else if (edge) {
+      // Show edge hitbox
+      const sourceId = 'source' in edge ? edge.source : (edge as any).subject;
+      const targetId = 'target' in edge ? edge.target : (edge as any).object;
+      
+      const sourcePos = this.positions.get(sourceId);
+      const targetPos = this.positions.get(targetId);
+      
+      if (sourcePos && targetPos) {
+        // Check if edge is curved
+        const edgeStyle = 'properties' in edge ? (edge as any).properties?.curveStyle : undefined;
+        
+        if (edgeStyle === 'bezier' && 'drawCurvePath' in this.renderer) {
+          // Draw the bezier curve path
+          const controlPoint = this.calculateBezierControlPoint(sourcePos, targetPos);
+          const curvePoints: { x: number; y: number }[] = [];
+          
+          // Sample the curve
+          for (let i = 0; i <= 20; i++) {
+            const t = i / 20;
+            const u = 1 - t;
+            const tt = t * t;
+            const uu = u * u;
+            
+            curvePoints.push({
+              x: uu * sourcePos.x + 2 * u * t * controlPoint.x + tt * targetPos.x,
+              y: uu * sourcePos.y + 2 * u * t * controlPoint.y + tt * targetPos.y
+            });
+          }
+          
+          (this.renderer as any).drawCurvePath(curvePoints, 'rgba(0, 255, 100, 0.6)');
+        }
+        
+        // Show bounding box
+        if ('drawHitbox' in this.renderer) {
+          const tolerance = 10;
+          const minX = Math.min(sourcePos.x, targetPos.x) - tolerance;
+          const minY = Math.min(sourcePos.y, targetPos.y) - tolerance;
+          const maxX = Math.max(sourcePos.x, targetPos.x) + tolerance;
+          const maxY = Math.max(sourcePos.y, targetPos.y) + tolerance;
+          
+          (this.renderer as any).drawHitbox({
+            x: minX,
+            y: minY,
+            width: maxX - minX,
+            height: maxY - minY
+          }, 'rgba(255, 100, 0, 0.3)');
+        }
+      }
+    }
+
+    // Re-render to show the hitbox
+    this.renderer.render();
   }
 }

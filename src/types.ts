@@ -95,7 +95,20 @@ export interface NodeStyle {
   stroke?: string;
   strokeWidth?: number;
   radius?: number;
-  shape?: 'circle' | 'rectangle' | 'diamond' | 'hexagon';
+  shape?: 'circle' | 'rectangle' | 'diamond' | 'hexagon' | 'window';
+  icon?: string; // Emoji or text to render inside the shape
+  displayMode?: 'simple' | 'detailed'; // Simple: just icon, Detailed: full window
+  window?: {
+    width?: number;
+    height?: number;
+    borderRadius?: number;
+    padding?: number;
+    headerHeight?: number;
+    backgroundColor?: string;
+    borderColor?: string;
+    borderWidth?: number;
+    lines?: string[]; // Additional text lines to display in window
+  };
   label?: {
     text?: string;
     fontSize?: number;
@@ -117,6 +130,7 @@ export interface EdgeStyle {
     fontFamily?: string;
     color?: string;
     backgroundColor?: string;
+    rotateWithEdge?: boolean; // Rotate label to align with edge direction
   };
   curvature?: number;
 }
@@ -146,6 +160,7 @@ export interface InteractionConfig {
   selectable?: boolean;
   hoverable?: boolean;
   multiSelect?: boolean;
+  showHitboxes?: boolean;  // Show visual hitboxes when clicking/hovering
 }
 
 // ============================================================================
@@ -157,6 +172,7 @@ export interface GraphEvent {
   target: GraphNode | GraphEdge | null;
   position: Position;
   originalEvent: Event;
+  data?: any; // Optional data payload for custom events
 }
 
 export type EventCallback = (event: GraphEvent) => void;

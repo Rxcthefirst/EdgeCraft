@@ -5,6 +5,8 @@ import { socialNetworkData, rdfData, orgChartData, dependencyData, knowledgeGrap
 let graph = null;
 let nodeCounter = 1;
 let currentRenderer = 'auto'; // 'auto', 'canvas', 'webgl'
+let nodeDisplayMode = 'simple'; // 'simple', 'detailed' - toggle for advanced node styling
+let edgeLabelRotation = true; // true = rotated with edge, false = horizontal
 
 // Initialize the application
 function init() {
@@ -78,18 +80,22 @@ function getNodeStyle(node) {
     });
   }
   
-  // Different colors for different node types
-  const typeColors = {
-    'Person': '#667eea',
-    'Company': '#e74c3c',
-    'Project': '#2ecc71',
-    'Department': '#f39c12',
-    'Package': '#9b59b6',
-    'Module': '#3498db',
-    'Node': '#3498db' // For large graph nodes
+  // Semantic type styling configuration
+  const typeConfig = {
+    'Person': { color: '#667eea', shape: 'circle' },
+    'Organization': { color: '#e67e22', shape: 'rectangle' },
+    'Project': { color: '#2ecc71', shape: 'diamond' },
+    'Publication': { color: '#3498db', shape: 'rectangle' },
+    'Skill': { color: '#9b59b6', shape: 'hexagon' },
+    'Company': { color: '#e74c3c', shape: 'rectangle' },
+    'Department': { color: '#f39c12', shape: 'diamond' },
+    'Package': { color: '#9b59b6', shape: 'rectangle' },
+    'Module': { color: '#3498db', shape: 'circle' },
+    'Node': { color: '#3498db', shape: 'circle' } // For large graph nodes
   };
   
   const label = node.labels?.[0] || 'Default';
+  const config = typeConfig[label] || { color: '#95a5a6', shape: 'circle' };
   
   // Color by cluster for large graphs
   let fill;
@@ -97,7 +103,7 @@ function getNodeStyle(node) {
     const clusterColors = ['#e74c3c', '#3498db', '#2ecc71', '#f39c12', '#9b59b6', '#1abc9c', '#e67e22', '#95a5a6', '#34495e', '#16a085'];
     fill = clusterColors[node.properties.cluster % clusterColors.length];
   } else {
-    fill = typeColors[label] || '#95a5a6';
+    fill = config.color;
   }
   
   // Size based on connections (safely check if graph exists)
@@ -111,15 +117,74 @@ function getNodeStyle(node) {
   }
   const radius = 20 + Math.min(degree * 3, 20);
   
+  // Build multi-line label for Knowledge Graph nodes
+  let labelText;
+  if (node.properties?.name) {
+    // Multi-line label showing multiple properties
+    const lines = [node.properties.name];
+    if (node.properties.title) lines.push(node.properties.title);
+    if (node.properties.type) lines.push(node.properties.type);
+    if (node.properties.status) lines.push(`Status: ${node.properties.status}`);
+    if (node.properties.year) lines.push(`Year: ${node.properties.year}`);
+    labelText = lines.join('\n');
+  } else {
+    labelText = node.value || String(node.id);
+  }
+  
+  // Use window mode for Knowledge Graph nodes with rich data
+  const useWindowMode = node.properties?.name && nodeDisplayMode === 'detailed';
+  
+  if (useWindowMode) {
+    // Window mode: all content inside a bordered box
+    const contentLines = [];
+    if (node.properties.title) contentLines.push(node.properties.title);
+    if (node.properties.type) contentLines.push(node.properties.type);
+    if (node.properties.location) contentLines.push(`📍 ${node.properties.location}`);
+    if (node.properties.status) contentLines.push(`⚡ ${node.properties.status}`);
+    if (node.properties.budget) contentLines.push(`💰 ${node.properties.budget}`);
+    if (node.properties.year) contentLines.push(`📅 ${node.properties.year}`);
+    if (node.properties.citations) contentLines.push(`📚 ${node.properties.citations} citations`);
+    if (node.properties.email) contentLines.push(`✉️ ${node.properties.email}`);
+    
+    return {
+      fill: isSelected ? adjustBrightness(fill, 1.3) : fill,
+      stroke: isSelected ? '#FFD700' : '#2c3e50',
+      strokeWidth: isSelected ? 4 : 2,
+      shape: 'window',
+      displayMode: 'detailed',
+      icon: node.properties?.icon,
+      window: {
+        width: 140,
+        height: Math.max(80, 40 + contentLines.length * 15),
+        borderRadius: 8,
+        padding: 8,
+        headerHeight: 35,
+        backgroundColor: '#ffffff',
+        borderColor: isSelected ? '#FFD700' : config.color,
+        borderWidth: isSelected ? 3 : 2,
+        lines: [node.properties.name, ...contentLines]
+      },
+      label: {
+        text: '', // No external label in window mode
+        fontSize: 11,
+        color: '#333',
+        position: 'bottom'
+      }
+    };
+  }
+  
+  // Simple mode: icon inside shape, external label
   return {
     fill: isSelected ? adjustBrightness(fill, 1.3) : fill,
     radius,
     stroke: isSelected ? '#FFD700' : '#2c3e50',
     strokeWidth: isSelected ? 4 : 2,
-    shape: label === 'Company' || label === 'Package' ? 'rectangle' : 'circle',
+    shape: config.shape,
+    displayMode: 'simple',
+    icon: node.properties?.icon, // Icon to render inside the shape
     label: {
-      text: node.properties?.name || node.value || String(node.id),
-      fontSize: 12,
+      text: labelText,
+      fontSize: 11,
       color: '#333',
       position: 'bottom'
     }
@@ -159,11 +224,13 @@ function getEdgeStyle(edge) {
     stroke: isSelected ? '#FFD700' : stroke,
     strokeWidth: isSelected ? 4 : 2,
     arrow: 'forward',
+    curvature: 0.0,
     label: {
       text: label,
       fontSize: isSelected ? 11 : 10,
       color: isSelected ? '#000' : '#666',
-      backgroundColor: isSelected ? 'rgba(255,215,0,0.3)' : 'rgba(255,255,255,0.9)'
+      backgroundColor: isSelected ? 'rgba(255,215,0,0.3)' : 'rgba(255,255,255,0.9)',
+      rotateWithEdge: edgeLabelRotation
     }
   };
 }
@@ -252,6 +319,41 @@ function setupExampleButtons() {
 
 // Renderer controls
 function setupRendererControls() {
+  // Display mode toggle
+  ['simple', 'detailed'].forEach(mode => {
+    document.getElementById(`display-${mode}`).addEventListener('click', function() {
+      // Update active state
+      document.querySelectorAll('[id^="display-"]').forEach(btn => btn.classList.remove('active'));
+      this.classList.add('active');
+      
+      // Set display mode and re-render
+      nodeDisplayMode = mode;
+      if (graph) {
+        graph.render(); // Re-render with new display mode
+      }
+    });
+  });
+  
+  // Edge label rotation toggle
+  document.getElementById('edge-label-rotated').addEventListener('click', function() {
+    document.querySelectorAll('[id^="edge-label-"]').forEach(btn => btn.classList.remove('active'));
+    this.classList.add('active');
+    edgeLabelRotation = true;
+    if (graph) {
+      graph.render();
+    }
+  });
+  
+  document.getElementById('edge-label-horizontal').addEventListener('click', function() {
+    document.querySelectorAll('[id^="edge-label-"]').forEach(btn => btn.classList.remove('active'));
+    this.classList.add('active');
+    edgeLabelRotation = false;
+    if (graph) {
+      graph.render();
+    }
+  });
+  
+  // Renderer type toggle
   ['auto', 'canvas', 'webgl'].forEach(type => {
     document.getElementById(`renderer-${type}`).addEventListener('click', function() {
       // Update active state

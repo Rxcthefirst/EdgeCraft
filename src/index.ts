@@ -5,6 +5,8 @@
 
 export { EdgeCraft } from './EdgeCraft';
 export { Graph } from './core/Graph';
+export { RTree } from './core/RTree';
+export type { BoundingBox, Point, SpatialItem } from './core/RTree';
 export * from './types';
 
 // Version

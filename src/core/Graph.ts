@@ -14,18 +14,21 @@ import {
   RDFTriple,
   AssociationClass,
 } from '../types';
+import { RTree, BoundingBox, Point } from './RTree';
 
 export class Graph {
   private nodes: Map<NodeId, GraphNode>;
   private edges: Map<EdgeId, GraphEdge>;
   private associationClasses: Map<NodeId, AssociationClass>;
   private adjacencyList: Map<NodeId, Set<EdgeId>>;
+  private spatialIndex: RTree;
 
   constructor(data?: GraphData) {
     this.nodes = new Map();
     this.edges = new Map();
     this.associationClasses = new Map();
     this.adjacencyList = new Map();
+    this.spatialIndex = new RTree();
 
     if (data) {
       this.setData(data);
@@ -57,6 +60,7 @@ export class Graph {
     this.edges.clear();
     this.associationClasses.clear();
     this.adjacencyList.clear();
+    this.spatialIndex.clear();
   }
 
   // ============================================================================
@@ -68,6 +72,13 @@ export class Graph {
     if (!this.adjacencyList.has(node.id)) {
       this.adjacencyList.set(node.id, new Set());
     }
+    
+    // Add to spatial index
+    this.spatialIndex.insert({
+      id: node.id,
+      type: 'node',
+      bounds: this.calculateNodeBounds(node)
+    });
   }
 
   removeNode(nodeId: NodeId): boolean {
@@ -80,6 +91,7 @@ export class Graph {
 
     this.nodes.delete(nodeId);
     this.adjacencyList.delete(nodeId);
+    this.spatialIndex.remove(nodeId);
     return true;
   }
 
@@ -99,7 +111,19 @@ export class Graph {
     const node = this.nodes.get(nodeId);
     if (!node) return false;
 
-    this.nodes.set(nodeId, { ...node, ...updates });
+    const updatedNode = { ...node, ...updates };
+    this.nodes.set(nodeId, updatedNode);
+    
+    // Update spatial index if position changed
+    if (updates.hasOwnProperty('x') || updates.hasOwnProperty('y')) {
+      this.spatialIndex.remove(nodeId);
+      this.spatialIndex.insert({
+        id: nodeId,
+        type: 'node',
+        bounds: this.calculateNodeBounds(updatedNode)
+      });
+    }
+    
     return true;
   }
 
@@ -118,6 +142,31 @@ export class Graph {
     this.edges.set(edge.id, edge);
     this.adjacencyList.get(sourceId)?.add(edge.id);
     this.adjacencyList.get(targetId)?.add(edge.id);
+    
+    // Add to spatial index
+    this.spatialIndex.insert({
+      id: edge.id,
+      type: 'edge',
+      bounds: this.calculateEdgeBounds(edge)
+    });
+  }
+
+  updateEdge(edgeId: EdgeId, updates: Partial<GraphEdge>): boolean {
+    const edge = this.edges.get(edgeId);
+    if (!edge) return false;
+
+    const updatedEdge = { ...edge, ...updates };
+    this.edges.set(edgeId, updatedEdge);
+    
+    // Update spatial index - edges move when their connected nodes move
+    this.spatialIndex.remove(edgeId);
+    this.spatialIndex.insert({
+      id: edgeId,
+      type: 'edge',
+      bounds: this.calculateEdgeBounds(updatedEdge)
+    });
+    
+    return true;
   }
 
   removeEdge(edgeId: EdgeId): boolean {
@@ -131,6 +180,7 @@ export class Graph {
     this.adjacencyList.get(targetId)?.delete(edgeId);
 
     this.edges.delete(edgeId);
+    this.spatialIndex.remove(edgeId);
     return true;
   }
 
@@ -297,5 +347,143 @@ export class Graph {
 
   private isRDFTriple(edge: GraphEdge): edge is RDFTriple {
     return 'subject' in edge && 'predicate' in edge && 'object' in edge;
+  }
+
+  // ============================================================================
+  // Spatial Query Methods
+  // ============================================================================
+
+  /**
+   * Query nodes within a bounding box (viewport culling)
+   */
+  getNodesInBounds(bounds: BoundingBox): GraphNode[] {
+    const items = this.spatialIndex.query(bounds);
+    return items
+      .filter(item => item.type === 'node')
+      .map(item => this.nodes.get(item.id))
+      .filter((n): n is GraphNode => n !== undefined);
+  }
+
+  /**
+   * Query edges within a bounding box
+   */
+  getEdgesInBounds(bounds: BoundingBox): GraphEdge[] {
+    const items = this.spatialIndex.query(bounds);
+    return items
+      .filter(item => item.type === 'edge')
+      .map(item => this.edges.get(item.id))
+      .filter((e): e is GraphEdge => e !== undefined);
+  }
+
+  /**
+   * Find nodes near a point
+   */
+  getNodesNearPoint(point: Point, maxDistance: number = 50): GraphNode[] {
+    const queryBox: BoundingBox = {
+      x: point.x - maxDistance,
+      y: point.y - maxDistance,
+      width: maxDistance * 2,
+      height: maxDistance * 2
+    };
+    return this.getNodesInBounds(queryBox);
+  }
+
+  /**
+   * Find edges near a point
+   */
+  getEdgesNearPoint(point: Point, maxDistance: number = 10): GraphEdge[] {
+    const queryBox: BoundingBox = {
+      x: point.x - maxDistance,
+      y: point.y - maxDistance,
+      width: maxDistance * 2,
+      height: maxDistance * 2
+    };
+    return this.getEdgesInBounds(queryBox);
+  }
+
+  /**
+   * Find k nearest nodes to a point
+   */
+  getNearestNodes(point: Point, k: number = 1, maxDistance: number = Infinity): GraphNode[] {
+    const items = this.spatialIndex.nearest(point, k, maxDistance);
+    return items.map(item => this.nodes.get(item.id)).filter((n): n is GraphNode => n !== undefined);
+  }
+
+  /**
+   * Calculate bounding box for a node
+   */
+  private calculateNodeBounds(node: GraphNode): BoundingBox {
+    const x = (node as any).x || 0;
+    const y = (node as any).y || 0;
+    // Use larger default radius to account for styled nodes
+    // Max radius in typical use is ~50px, use 60px for safety margin
+    const radius = 60;
+    
+    return {
+      x: x - radius,
+      y: y - radius,
+      width: radius * 2,
+      height: radius * 2
+    };
+  }
+
+  /**
+   * Calculate bounding box for an edge
+   */
+  private calculateEdgeBounds(edge: GraphEdge): BoundingBox {
+    const sourceId = this.getSourceId(edge);
+    const targetId = this.getTargetId(edge);
+    const source = this.nodes.get(sourceId);
+    const target = this.nodes.get(targetId);
+    
+    if (!source || !target) {
+      return { x: 0, y: 0, width: 0, height: 0 };
+    }
+    
+    const sx = (source as any).x || 0;
+    const sy = (source as any).y || 0;
+    const tx = (target as any).x || 0;
+    const ty = (target as any).y || 0;
+    
+    // Add tolerance for edge hit detection (10px on each side)
+    const tolerance = 10;
+    
+    const minX = Math.min(sx, tx) - tolerance;
+    const minY = Math.min(sy, ty) - tolerance;
+    const maxX = Math.max(sx, tx) + tolerance;
+    const maxY = Math.max(sy, ty) + tolerance;
+    
+    return {
+      x: minX,
+      y: minY,
+      width: maxX - minX,
+      height: maxY - minY
+    };
+  }
+
+  /**   * Rebuild spatial index (call after bulk position updates)
+   */
+  rebuildSpatialIndex(): void {
+    this.spatialIndex.clear();
+    this.nodes.forEach(node => {
+      this.spatialIndex.insert({
+        id: node.id,
+        type: 'node',
+        bounds: this.calculateNodeBounds(node)
+      });
+    });
+    this.edges.forEach(edge => {
+      this.spatialIndex.insert({
+        id: edge.id,
+        type: 'edge',
+        bounds: this.calculateEdgeBounds(edge)
+      });
+    });
+  }
+
+  /**   * Get spatial index debug info
+   */
+  getSpatialIndexDebugInfo(): any {
+    return this.spatialIndex.getDebugInfo();
   }
 }

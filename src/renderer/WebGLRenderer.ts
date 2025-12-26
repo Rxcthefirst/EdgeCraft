@@ -537,9 +537,12 @@ export class WebGLRenderer implements IRenderer {
     if (this.nodeBuffer) gl.deleteBuffer(this.nodeBuffer);
     if (this.edgeBuffer) gl.deleteBuffer(this.edgeBuffer);
     
-    // Remove canvas
+    // Remove canvases
     if (this.canvas.parentNode) {
       this.canvas.parentNode.removeChild(this.canvas);
+    }
+    if (this.labelCanvas.parentNode) {
+      this.labelCanvas.parentNode.removeChild(this.labelCanvas);
     }
     
     this.nodes.clear();
@@ -578,18 +581,37 @@ export class WebGLRenderer implements IRenderer {
     // Clear label canvas
     ctx.clearRect(0, 0, this.width, this.height);
     
+    // Draw node icons inside shapes
+    for (const [nodeId, nodeVertex] of this.nodes.entries()) {
+      const style = this.nodeStyles.get(nodeId);
+      if (!style || !style.icon) continue;
+      
+      const screenX = nodeVertex.x * scale + tx;
+      const screenY = nodeVertex.y * scale + ty;
+      const iconSize = (style.radius || 30) * 0.8 * scale;
+      
+      ctx.save();
+      ctx.font = `${iconSize}px Arial`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillStyle = '#ffffff';
+      ctx.fillText(style.icon, screenX, screenY);
+      ctx.restore();
+    }
+    
     // Draw node labels
     for (const [nodeId, nodeVertex] of this.nodes.entries()) {
       const style = this.nodeStyles.get(nodeId);
       if (!style || !style.label || !style.label.text) continue;
       
       const label = style.label;
-      const labelText = label.text as string; // Type assertion - checked above
+      const labelText = label.text as string;
       const screenX = nodeVertex.x * scale + tx;
       const screenY = nodeVertex.y * scale + ty;
       
       ctx.save();
-      ctx.font = `${label.fontSize || 12}px ${label.fontFamily || 'Arial'}`;
+      const fontSize = label.fontSize || 12;
+      ctx.font = `${fontSize}px ${label.fontFamily || 'Arial'}`;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       
@@ -601,22 +623,29 @@ export class WebGLRenderer implements IRenderer {
         offsetY = -(style.radius || 30) * scale - 15;
       }
       
+      // Split text into lines for multi-line support
+      const lines = labelText.split('\\n');
+      const lineHeight = fontSize * 1.2;
+      
       // Draw background if specified
       if (label.backgroundColor) {
-        const metrics = ctx.measureText(labelText);
+        const maxWidth = Math.max(...lines.map(line => ctx.measureText(line).width));
         const padding = 4;
         ctx.fillStyle = label.backgroundColor;
         ctx.fillRect(
-          screenX - metrics.width / 2 - padding,
-          screenY + offsetY - (label.fontSize || 12) / 2 - padding,
-          metrics.width + padding * 2,
-          (label.fontSize || 12) + padding * 2
+          screenX - maxWidth / 2 - padding,
+          screenY + offsetY - (lines.length - 1) * lineHeight / 2 - fontSize / 2 - padding,
+          maxWidth + padding * 2,
+          lines.length * lineHeight + padding * 2
         );
       }
       
-      // Draw text
+      // Draw text (multi-line) (multi-line)
       ctx.fillStyle = label.color || '#333';
-      ctx.fillText(labelText, screenX, screenY + offsetY);
+      lines.forEach((line, index) => {
+        const lineY = screenY + offsetY + (index - (lines.length - 1) / 2) * lineHeight;
+        ctx.fillText(line, screenX, lineY);
+      });
       
       ctx.restore();
     }
@@ -634,9 +663,27 @@ export class WebGLRenderer implements IRenderer {
       const screenY = midY * scale + ty;
       
       ctx.save();
+      
+      // Rotate label to align with edge if enabled
+      if (label.rotateWithEdge !== false) { // Default to true
+        const dx = edgeVertex.x2 - edgeVertex.x1;
+        const dy = edgeVertex.y2 - edgeVertex.y1;
+        const angle = Math.atan2(dy, dx);
+        // Keep text upright - flip if angle is upside down
+        let displayAngle = angle;
+        if (Math.abs(angle) > Math.PI / 2) {
+          displayAngle = angle + Math.PI;
+        }
+        ctx.translate(screenX, screenY);
+        ctx.rotate(displayAngle);
+      }
+      
       ctx.font = `${label.fontSize || 10}px ${label.fontFamily || 'Arial'}`;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
+      
+      const drawX = label.rotateWithEdge !== false ? 0 : screenX;
+      const drawY = label.rotateWithEdge !== false ? 0 : screenY;
       
       // Draw background if specified
       if (label.backgroundColor) {
@@ -644,8 +691,8 @@ export class WebGLRenderer implements IRenderer {
         const padding = 3;
         ctx.fillStyle = label.backgroundColor;
         ctx.fillRect(
-          screenX - metrics.width / 2 - padding,
-          screenY - (label.fontSize || 10) / 2 - padding,
+          drawX - metrics.width / 2 - padding,
+          drawY - (label.fontSize || 10) / 2 - padding,
           metrics.width + padding * 2,
           (label.fontSize || 10) + padding * 2
         );
@@ -653,7 +700,7 @@ export class WebGLRenderer implements IRenderer {
       
       // Draw text
       ctx.fillStyle = label.color || '#666';
-      ctx.fillText(labelText, screenX, screenY);
+      ctx.fillText(labelText, drawX, drawY);
       
       ctx.restore();
     }

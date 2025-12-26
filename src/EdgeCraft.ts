@@ -27,6 +27,7 @@ export class EdgeCraft {
   private config: EdgeCraftConfig;
   private positions: Map<string | number, Position>;
   private container: HTMLElement;
+  private selectionChangedHandler: ((event: any) => void) | null = null;
 
   constructor(config: EdgeCraftConfig) {
     this.config = this.validateConfig(config);
@@ -38,6 +39,9 @@ export class EdgeCraft {
     const width = config.width || this.container.clientWidth || 800;
     const height = config.height || this.container.clientHeight || 600;
     const nodeCount = config.data?.nodes?.length || 0;
+
+    // Clear container to remove any previous renderer canvases
+    this.container.innerHTML = '';
 
     // Use Canvas/WebGL renderer system with auto-detection
     this.renderer = RendererFactory.create({
@@ -80,9 +84,11 @@ export class EdgeCraft {
       
       // Listen for selection changes to trigger re-render with updated styles
       // Do this after initialization is complete to avoid premature renders
-      this.interactionManager.on('selection-changed' as any, () => {
-        this.render();
-      });
+      this.selectionChangedHandler = (event: any) => {
+        // Only update affected nodes/edges instead of full render
+        this.updateSelectionStyles(event);
+      };
+      this.interactionManager.on('selection-changed' as any, this.selectionChangedHandler);
     }, 100);
   }
 
@@ -174,7 +180,7 @@ export class EdgeCraft {
     // Clear and rebuild from graph data
     this.renderer.clear();
     
-    // Add all nodes
+    // Add all nodes and update their positions
     this.graph.getAllNodes().forEach((node) => {
       // Add position to node object
       const pos = this.positions.get(node.id);
@@ -182,6 +188,13 @@ export class EdgeCraft {
         (node as any).x = pos.x;
         (node as any).y = pos.y;
       }
+    });
+    
+    // Rebuild spatial index now that nodes have positions
+    this.graph.rebuildSpatialIndex();
+    
+    // Render nodes with their styles
+    this.graph.getAllNodes().forEach((node) => {
       
       // Compute style (handle StyleFunction)
       const nodeStyle = typeof baseNodeStyle === 'function'
@@ -202,6 +215,39 @@ export class EdgeCraft {
     });
     
     // Trigger render
+    this.renderer.render();
+  }
+
+  /**
+   * Update only the nodes/edges affected by selection change
+   * This is much more efficient than re-rendering the entire graph
+   */
+  private updateSelectionStyles(event: any): void {
+    const baseNodeStyle = this.config.nodeStyle || this.getDefaultNodeStyle();
+    const baseEdgeStyle = this.config.edgeStyle || this.getDefaultEdgeStyle();
+    
+    // Update the specific node or edge that was selected/deselected
+    if (event.data?.nodeId !== undefined) {
+      const node = this.graph.getNode(event.data.nodeId);
+      if (node) {
+        const nodeStyle = typeof baseNodeStyle === 'function'
+          ? { ...this.getDefaultNodeStyle(), ...baseNodeStyle(node) as NodeStyle }
+          : baseNodeStyle;
+        this.renderer.updateNode(node.id, {}, nodeStyle);
+      }
+    }
+    
+    if (event.data?.edgeId !== undefined) {
+      const edge = this.graph.getEdge(event.data.edgeId);
+      if (edge) {
+        const edgeStyle = typeof baseEdgeStyle === 'function'
+          ? { ...this.getDefaultEdgeStyle(), ...baseEdgeStyle(edge) as EdgeStyle }
+          : baseEdgeStyle;
+        this.renderer.updateEdge(edge.id, {}, edgeStyle);
+      }
+    }
+    
+    // Trigger a single render for the updates
     this.renderer.render();
   }
 
@@ -356,7 +402,13 @@ export class EdgeCraft {
   // ============================================================================
 
   destroy(): void {
-    // IRenderer has dispose method
+    // Remove event listener to prevent events during destruction
+    if (this.selectionChangedHandler) {
+      this.interactionManager.off('selection-changed' as any, this.selectionChangedHandler);
+      this.selectionChangedHandler = null;
+    }
+    
+    // Dispose renderer (removes canvases)
     this.renderer.dispose();
   }
 

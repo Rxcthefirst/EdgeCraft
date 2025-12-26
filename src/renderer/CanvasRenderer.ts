@@ -108,7 +108,7 @@ export class CanvasRenderer implements IRenderer {
       canvas.style.top = '0';
       canvas.style.left = '0';
       canvas.style.zIndex = String(index);
-      canvas.style.pointerEvents = layerType === 'overlay' ? 'auto' : 'none';
+      canvas.style.pointerEvents = 'none'; // All layers should not block mouse events
       
       const ctx = canvas.getContext('2d', { alpha: layerType !== 'background' })!;
       ctx.scale(this.pixelRatio, this.pixelRatio);
@@ -134,12 +134,16 @@ export class CanvasRenderer implements IRenderer {
     if (!this.isDirty) {
       return;
     }
+    
+    // Early return if contexts haven't been initialized
+    if (this.contexts.size === 0) {
+      return;
+    }
 
     // Clear dynamic layers
     ['edges', 'nodes', 'labels'].forEach(layer => {
       const ctx = this.contexts.get(layer as LayerType);
       if (!ctx) {
-        console.error(`[CanvasRenderer] Context not found for layer: ${layer}`);
         return;
       }
       ctx.save();
@@ -216,17 +220,39 @@ export class CanvasRenderer implements IRenderer {
 
     // Draw shape based on type
     switch (style.shape) {
+      case 'window':
+        this.renderWindowNode(ctx, x, y, style);
+        break;
+
       case 'circle':
         ctx.beginPath();
         ctx.arc(x, y, style.radius || 30, 0, Math.PI * 2);
         ctx.fill();
         ctx.stroke();
+        
+        // Render icon inside the shape if provided (simple mode)
+        if (style.icon && style.displayMode !== 'detailed') {
+          ctx.fillStyle = '#ffffff';
+          ctx.font = `${(style.radius || 30) * 0.8}px Arial`;
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillText(style.icon, x, y);
+        }
         break;
 
       case 'rectangle':
         const rectSize = (style.radius || 30) * 1.5;
         ctx.fillRect(x - rectSize / 2, y - rectSize / 2, rectSize, rectSize);
         ctx.strokeRect(x - rectSize / 2, y - rectSize / 2, rectSize, rectSize);
+        
+        // Render icon inside the shape if provided (simple mode)
+        if (style.icon && style.displayMode !== 'detailed') {
+          ctx.fillStyle = '#ffffff';
+          ctx.font = `${(style.radius || 30) * 0.8}px Arial`;
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillText(style.icon, x, y);
+        }
         break;
 
       case 'diamond':
@@ -239,6 +265,15 @@ export class CanvasRenderer implements IRenderer {
         ctx.closePath();
         ctx.fill();
         ctx.stroke();
+        
+        // Render icon inside the shape if provided (simple mode)
+        if (style.icon && style.displayMode !== 'detailed') {
+          ctx.fillStyle = '#ffffff';
+          ctx.font = `${diamondSize * 0.6}px Arial`;
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillText(style.icon, x, y);
+        }
         break;
 
       case 'hexagon':
@@ -254,6 +289,15 @@ export class CanvasRenderer implements IRenderer {
         ctx.closePath();
         ctx.fill();
         ctx.stroke();
+        
+        // Render icon inside the shape if provided (simple mode)
+        if (style.icon && style.displayMode !== 'detailed') {
+          ctx.fillStyle = '#ffffff';
+          ctx.font = `${hexSize * 0.6}px Arial`;
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillText(style.icon, x, y);
+        }
         break;
 
       default:
@@ -262,8 +306,103 @@ export class CanvasRenderer implements IRenderer {
         ctx.arc(x, y, style.radius || 30, 0, Math.PI * 2);
         ctx.fill();
         ctx.stroke();
+        
+        // Render icon inside the shape if provided (simple mode)
+        if (style.icon && style.displayMode !== 'detailed') {
+          ctx.fillStyle = '#ffffff';
+          ctx.font = `${(style.radius || 30) * 0.8}px Arial`;
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillText(style.icon, x, y);
+        }
     }
 
+    ctx.restore();
+  }
+
+  private renderWindowNode(ctx: CanvasRenderingContext2D, x: number, y: number, style: any): void {
+    const win = style.window || {};
+    const width = win.width || 120;
+    const height = win.height || 80;
+    const borderRadius = win.borderRadius || 8;
+    const padding = win.padding || 10;
+    const headerHeight = win.headerHeight || 30;
+    const bgColor = win.backgroundColor || style.fill || '#ffffff';
+    const borderColor = win.borderColor || style.stroke || '#2c3e50';
+    const borderWidth = win.borderWidth || style.strokeWidth || 2;
+    
+    const left = x - width / 2;
+    const top = y - height / 2;
+    
+    ctx.save();
+    
+    // Draw rounded rectangle background
+    ctx.fillStyle = bgColor;
+    ctx.strokeStyle = borderColor;
+    ctx.lineWidth = borderWidth;
+    
+    ctx.beginPath();
+    ctx.moveTo(left + borderRadius, top);
+    ctx.lineTo(left + width - borderRadius, top);
+    ctx.arcTo(left + width, top, left + width, top + borderRadius, borderRadius);
+    ctx.lineTo(left + width, top + height - borderRadius);
+    ctx.arcTo(left + width, top + height, left + width - borderRadius, top + height, borderRadius);
+    ctx.lineTo(left + borderRadius, top + height);
+    ctx.arcTo(left, top + height, left, top + height - borderRadius, borderRadius);
+    ctx.lineTo(left, top + borderRadius);
+    ctx.arcTo(left, top, left + borderRadius, top, borderRadius);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+    
+    // Draw header area (if icon exists)
+    if (style.icon) {
+      ctx.fillStyle = style.fill || '#3498db';
+      ctx.beginPath();
+      ctx.moveTo(left + borderRadius, top);
+      ctx.lineTo(left + width - borderRadius, top);
+      ctx.arcTo(left + width, top, left + width, top + borderRadius, borderRadius);
+      ctx.lineTo(left + width, top + headerHeight);
+      ctx.lineTo(left, top + headerHeight);
+      ctx.lineTo(left, top + borderRadius);
+      ctx.arcTo(left, top, left + borderRadius, top, borderRadius);
+      ctx.closePath();
+      ctx.fill();
+      
+      // Render icon in header
+      ctx.fillStyle = '#ffffff';
+      ctx.font = `${headerHeight * 0.6}px Arial`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(style.icon, x, top + headerHeight / 2);
+    }
+    
+    // Render text lines in content area
+    if (win.lines && win.lines.length > 0) {
+      const contentTop = top + (style.icon ? headerHeight : 0) + padding;
+      const fontSize = 11;
+      const lineHeight = fontSize * 1.3;
+      
+      ctx.fillStyle = '#333';
+      ctx.font = `${fontSize}px Arial`;
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'top';
+      
+      win.lines.forEach((line: string, index: number) => {
+        const lineY = contentTop + index * lineHeight;
+        // Truncate text if too long
+        let displayText = line;
+        const maxWidth = width - padding * 2;
+        if (ctx.measureText(displayText).width > maxWidth) {
+          while (ctx.measureText(displayText + '...').width > maxWidth && displayText.length > 0) {
+            displayText = displayText.slice(0, -1);
+          }
+          displayText += '...';
+        }
+        ctx.fillText(displayText, left + padding, lineY);
+      });
+    }
+    
     ctx.restore();
   }
 
@@ -308,27 +447,32 @@ export class CanvasRenderer implements IRenderer {
         break;
     }
 
+    // Split text into lines for multi-line support
+    const lines = label.text ? label.text.split('\\n') : [];
+    const lineHeight = fontSize * 1.2;
+    
     // Draw background if specified
-    if (label.backgroundColor && label.text) {
-      const metrics = ctx.measureText(label.text);
+    if (label.backgroundColor && lines.length > 0) {
+      const maxWidth = Math.max(...lines.map(line => ctx.measureText(line).width));
       const padding = 4;
-      const bgWidth = metrics.width + padding * 2;
-      const bgHeight = fontSize + padding * 2;
+      const bgWidth = maxWidth + padding * 2;
+      const bgHeight = lines.length * lineHeight + padding * 2;
       
       ctx.fillStyle = label.backgroundColor;
       ctx.fillRect(
         labelX - bgWidth / 2,
-        labelY - bgHeight / 2,
+        labelY - (lines.length - 1) * lineHeight / 2 - bgHeight / 2,
         bgWidth,
         bgHeight
       );
     }
 
-    // Draw text
+    // Draw text (multi-line support)
     ctx.fillStyle = label.color || '#333';
-    if (label.text) {
-      ctx.fillText(label.text, labelX, labelY);
-    }
+    lines.forEach((line, index) => {
+      const lineY = labelY + (index - (lines.length - 1) / 2) * lineHeight;
+      ctx.fillText(line, labelX, lineY);
+    });
 
     ctx.restore();
   }
@@ -369,24 +513,48 @@ export class CanvasRenderer implements IRenderer {
       return;
     }
 
-    const curvature = 0.2;
-    const midX = (sx + tx) / 2;
-    const midY = (sy + ty) / 2;
-    const controlX = midX - dy * curvature;
-    const controlY = midY + dx * curvature;
-
+    // Use curvature from style (0 = straight line, 0.2 = default curve)
+    const curvature = style.curvature !== undefined ? style.curvature : 0.2;
+    
     // Draw edge path
     ctx.beginPath();
     ctx.moveTo(sx, sy);
-    ctx.quadraticCurveTo(controlX, controlY, tx, ty);
+    
+    if (curvature === 0) {
+      // Straight line
+      ctx.lineTo(tx, ty);
+    } else {
+      // Curved line
+      const midX = (sx + tx) / 2;
+      const midY = (sy + ty) / 2;
+      const controlX = midX - dy * curvature;
+      const controlY = midY + dx * curvature;
+      ctx.quadraticCurveTo(controlX, controlY, tx, ty);
+    }
     ctx.stroke();
 
-    // Draw arrow if specified
+    // Draw arrows
     if (style.arrow === 'forward' || style.arrow === 'both') {
-      this.drawArrow(ctx, controlX, controlY, tx, ty, style.strokeWidth || 2);
+      if (curvature === 0) {
+        this.drawArrow(ctx, sx, sy, tx, ty, style.strokeWidth || 2);
+      } else {
+        const midX = (sx + tx) / 2;
+        const midY = (sy + ty) / 2;
+        const controlX = midX - dy * curvature;
+        const controlY = midY + dx * curvature;
+        this.drawArrow(ctx, controlX, controlY, tx, ty, style.strokeWidth || 2);
+      }
     }
     if (style.arrow === 'backward' || style.arrow === 'both') {
-      this.drawArrow(ctx, controlX, controlY, sx, sy, style.strokeWidth || 2);
+      if (curvature === 0) {
+        this.drawArrow(ctx, tx, ty, sx, sy, style.strokeWidth || 2);
+      } else {
+        const midX = (sx + tx) / 2;
+        const midY = (sy + ty) / 2;
+        const controlX = midX - dy * curvature;
+        const controlY = midY + dx * curvature;
+        this.drawArrow(ctx, controlX, controlY, sx, sy, style.strokeWidth || 2);
+      }
     }
 
     ctx.restore();
@@ -433,24 +601,48 @@ export class CanvasRenderer implements IRenderer {
     const tx = (targetNode.node as any).x || 0;
     const ty = (targetNode.node as any).y || 0;
 
-    // Calculate label position (midpoint of curve)
+    // Calculate label position at edge midpoint
     const dx = tx - sx;
     const dy = ty - sy;
-    const curvature = 0.2;
-    const midX = (sx + tx) / 2;
-    const midY = (sy + ty) / 2;
-    const controlX = midX - dy * curvature;
-    const controlY = midY + dx * curvature;
+    const curvature = style.curvature !== undefined ? style.curvature : 0.2;
     
-    // Bezier curve midpoint
-    const labelX = (sx + 2 * controlX + tx) / 4;
-    const labelY = (sy + 2 * controlY + ty) / 4;
+    let labelX: number, labelY: number;
+    
+    if (curvature === 0) {
+      // Straight line - use simple midpoint
+      labelX = (sx + tx) / 2;
+      labelY = (sy + ty) / 2;
+    } else {
+      // Curved line - use bezier midpoint
+      const midX = (sx + tx) / 2;
+      const midY = (sy + ty) / 2;
+      const controlX = midX - dy * curvature;
+      const controlY = midY + dx * curvature;
+      // Bezier curve midpoint at t=0.5
+      labelX = (sx + 2 * controlX + tx) / 4;
+      labelY = (sy + 2 * controlY + ty) / 4;
+    }
 
     ctx.save();
 
     const label = style.label;
     const fontSize = label.fontSize || 10;
     const fontFamily = label.fontFamily || 'Arial, sans-serif';
+    
+    // Rotate label to align with edge if enabled
+    if (label.rotateWithEdge !== false) { // Default to true
+      const angle = Math.atan2(dy, dx);
+      // Keep text upright - flip if angle is upside down
+      let displayAngle = angle;
+      if (Math.abs(angle) > Math.PI / 2) {
+        displayAngle = angle + Math.PI;
+      }
+      ctx.translate(labelX, labelY);
+      ctx.rotate(displayAngle);
+      labelX = 0;
+      labelY = 0;
+    }
+    
     ctx.font = `${fontSize}px ${fontFamily}`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
@@ -574,6 +766,64 @@ export class CanvasRenderer implements IRenderer {
 
   getMetrics(): RendererMetrics {
     return { ...this.metrics };
+  }
+
+  /**
+   * Draw hitbox for debugging - shows bounding box for nodes/edges
+   */
+  drawHitbox(bounds: { x: number; y: number; width: number; height: number }, color: string = 'rgba(255, 0, 0, 0.3)'): void {
+    const ctx = this.contexts.get('overlay');
+    if (!ctx) return;
+
+    ctx.save();
+    ctx.translate(this.transform.x, this.transform.y);
+    ctx.scale(this.transform.scale, this.transform.scale);
+
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 2 / this.transform.scale;
+    ctx.strokeRect(bounds.x, bounds.y, bounds.width, bounds.height);
+
+    ctx.restore();
+  }
+
+  /**
+   * Draw a path/curve for debugging
+   */
+  drawCurvePath(points: { x: number; y: number }[], color: string = 'rgba(0, 255, 0, 0.5)'): void {
+    const ctx = this.contexts.get('overlay');
+    if (!ctx) return;
+
+    ctx.save();
+    ctx.translate(this.transform.x, this.transform.y);
+    ctx.scale(this.transform.scale, this.transform.scale);
+
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 3 / this.transform.scale;
+    ctx.beginPath();
+    
+    if (points.length > 0) {
+      ctx.moveTo(points[0].x, points[0].y);
+      for (let i = 1; i < points.length; i++) {
+        ctx.lineTo(points[i].x, points[i].y);
+      }
+    }
+    
+    ctx.stroke();
+
+    ctx.restore();
+  }
+
+  /**
+   * Clear the overlay layer (for hitboxes and debug drawings)
+   */
+  clearOverlay(): void {
+    const ctx = this.contexts.get('overlay');
+    if (!ctx) return;
+
+    ctx.save();
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, this.width * this.pixelRatio, this.height * this.pixelRatio);
+    ctx.restore();
   }
 
   private calculateNodeBounds(node: GraphNode, style: NodeStyle): BoundingBox {

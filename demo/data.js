@@ -53,7 +53,80 @@ const rdfData = {
     { id: 't9', subject: 'alice', predicate: 'foaf:mbox', object: 'email_alice' }
   ]
 };
-
+// Inverse Relationship Demo Data
+const inverseRelationshipData = {
+  nodes: [
+    { id: 'john', type: 'uri', value: 'http://example.org/john', properties: { name: 'John Smith', role: 'CEO' } },
+    { id: 'ralph', type: 'uri', value: 'http://example.org/ralph', properties: { name: 'Ralph Jones', role: 'Engineer' } },
+    { id: 'sarah', type: 'uri', value: 'http://example.org/sarah', properties: { name: 'Sarah Lee', role: 'Designer' } },
+    { id: 'mike', type: 'uri', value: 'http://example.org/mike', properties: { name: 'Mike Brown', role: 'Manager' } },
+    { id: 'lisa', type: 'uri', value: 'http://example.org/lisa', properties: { name: 'Lisa Davis', role: 'Engineer' } },
+    { id: 'company', type: 'uri', value: 'http://example.org/techcorp', properties: { name: 'TechCorp Inc' } }
+  ],
+  edges: [
+    // Inverse relationship: employs <-> employedBy
+    { 
+      id: 'emp1', 
+      subject: 'john', 
+      predicate: 'employs', 
+      object: 'ralph',
+      forwardPredicate: 'employs',
+      inversePredicate: 'employedBy'
+    },
+    { 
+      id: 'emp2', 
+      subject: 'john', 
+      predicate: 'employs', 
+      object: 'sarah',
+      forwardPredicate: 'employs',
+      inversePredicate: 'employedBy'
+    },
+    
+    // Inverse relationship: supervises <-> supervisedBy
+    { 
+      id: 'sup1', 
+      subject: 'mike', 
+      predicate: 'supervises', 
+      object: 'ralph',
+      forwardPredicate: 'supervises',
+      inversePredicate: 'supervisedBy'
+    },
+    { 
+      id: 'sup2', 
+      subject: 'mike', 
+      predicate: 'supervises', 
+      object: 'lisa',
+      forwardPredicate: 'supervises',
+      inversePredicate: 'supervisedBy'
+    },
+    
+    // Symmetric relationship: friend (both directions, same predicate)
+    { 
+      id: 'friend1', 
+      subject: 'ralph', 
+      predicate: 'friend', 
+      object: 'sarah'
+    },
+    
+    // Asymmetric relationship: reports to (single direction, inverse not yet learned)
+    { 
+      id: 'report1', 
+      subject: 'lisa', 
+      predicate: 'reportsTo', 
+      object: 'mike'
+    },
+    
+    // Multiple relationships between same nodes
+    { 
+      id: 'mentor1', 
+      subject: 'john', 
+      predicate: 'mentors', 
+      object: 'mike',
+      forwardPredicate: 'mentors',
+      inversePredicate: 'mentoredBy'
+    }
+  ]
+};
 const orgChartData = {
   nodes: [
     { id: 1, labels: ['Person'], properties: { name: 'CEO Sarah', title: 'Chief Executive Officer' } },
@@ -317,4 +390,45 @@ for (let i = 0; i < 1000; i++) {
   }
 }
 
-export { socialNetworkData, rdfData, orgChartData, dependencyData, knowledgeGraphData, largeGraphData };
+// Advanced Edge Features Demo Data
+const advancedEdgesData = {
+  nodes: [
+    { id: 1, labels: ['State'], properties: { name: 'Idle', color: '#4CAF50' } },
+    { id: 2, labels: ['State'], properties: { name: 'Processing', color: '#2196F3' } },
+    { id: 3, labels: ['State'], properties: { name: 'Error', color: '#F44336' } },
+    { id: 4, labels: ['State'], properties: { name: 'Complete', color: '#9C27B0' } },
+    { id: 5, labels: ['Person'], properties: { name: 'Alice' } },
+    { id: 6, labels: ['Person'], properties: { name: 'Bob' } },
+    { id: 7, labels: ['Car'], properties: { name: 'Tesla Model 3' } },
+    { id: 8, labels: ['Engine'], properties: { name: 'Electric Motor' } },
+    { id: 9, labels: ['Wheel'], properties: { name: 'Front Left' } }
+  ],
+  edges: [
+    // Self-loops (reflexive relationships)
+    { id: 'self1', source: 1, target: 1, label: 'wait', properties: {} },
+    { id: 'self2', source: 3, target: 3, label: 'retry', properties: {} },
+    
+    // Directed edges (state machine)
+    { id: 'e1', source: 1, target: 2, label: 'start', properties: {} },
+    { id: 'e2', source: 2, target: 4, label: 'success', properties: {} },
+    { id: 'e3', source: 2, target: 3, label: 'error', properties: {} },
+    { id: 'e4', source: 3, target: 1, label: 'reset', properties: {} },
+    { id: 'e5', source: 4, target: 1, label: 'reset', properties: {} },
+    
+    // Bidirectional relationships
+    { id: 'bi1', source: 5, target: 6, label: 'friend', properties: {} },
+    { id: 'bi2', source: 6, target: 5, label: 'friend', properties: {} },
+    
+    // Multiple edges between same nodes (parallel relationships)
+    { id: 'multi1', source: 5, target: 6, label: 'colleague', properties: {} },
+    { id: 'multi2', source: 5, target: 6, label: 'neighbor', properties: {} },
+    { id: 'multi3', source: 5, target: 6, label: 'classmate', properties: {} },
+    
+    // RDF-style inverse relationships (part-whole)
+    { id: 'part1', source: 7, target: 8, label: 'hasPart', properties: { inverse: 'partOf' } },
+    { id: 'part2', source: 7, target: 9, label: 'hasPart', properties: { inverse: 'partOf' } }
+  ]
+};
+
+export { socialNetworkData, rdfData, orgChartData, dependencyData, knowledgeGraphData, largeGraphData, advancedEdgesData, inverseRelationshipData };
+

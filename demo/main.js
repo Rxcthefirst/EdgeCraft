@@ -1,5 +1,5 @@
 import { EdgeCraft } from 'edgecraft';
-import { socialNetworkData, rdfData, orgChartData, dependencyData, knowledgeGraphData, largeGraphData } from './data.js';
+import { socialNetworkData, rdfData, orgChartData, dependencyData, knowledgeGraphData, largeGraphData, advancedEdgesData, inverseRelationshipData } from './data.js';
 
 // Global graph instance
 let graph = null;
@@ -315,6 +315,226 @@ function setupExampleButtons() {
   document.getElementById('load-large').addEventListener('click', () => {
     createGraph(largeGraphData);
   });
+  
+  document.getElementById('load-advanced-edges').addEventListener('click', () => {
+    createGraphWithAdvancedEdges(advancedEdgesData);
+  });
+  
+  // Multi-edge bundling test button
+  document.getElementById('load-multi-edge-test').addEventListener('click', () => {
+    createMultiEdgeTest();
+  });
+  
+  // Inverse relationship test button
+  document.getElementById('load-inverse-relationship-test').addEventListener('click', () => {
+    createInverseRelationshipTest();
+  });
+}
+
+// Create comprehensive multi-edge bundling test
+function createMultiEdgeTest() {
+  const data = {
+    nodes: [
+      { id: 'A', label: 'Node A', x: 200, y: 300 },
+      { id: 'B', label: 'Node B', x: 600, y: 300 },
+      { id: 'C', label: 'Node C', x: 200, y: 500 },
+      { id: 'D', label: 'Node D', x: 600, y: 500 }
+    ],
+    edges: [
+      // Test 1: Single edge (should be straight)
+      { id: 'single1', source: 'A', target: 'C', label: '1 edge: straight' },
+      
+      // Test 2: Two edges (both curved symmetrically)
+      { id: 'double1', source: 'C', target: 'D', label: '2 edges: curve 1' },
+      { id: 'double2', source: 'C', target: 'D', label: '2 edges: curve 2' },
+      
+      // Test 3: Three edges (center straight, sides curved)
+      { id: 'triple1', source: 'A', target: 'B', label: 'Colleague' },
+      { id: 'triple2', source: 'A', target: 'B', label: 'Friend' },
+      { id: 'triple3', source: 'A', target: 'B', label: 'Neighbor' },
+      
+      // Test 4: Five edges (demonstrates scaling)
+      { id: 'five1', source: 'B', target: 'D', label: 'Edge 1' },
+      { id: 'five2', source: 'B', target: 'D', label: 'Edge 2' },
+      { id: 'five3', source: 'B', target: 'D', label: 'Edge 3' },
+      { id: 'five4', source: 'B', target: 'D', label: 'Edge 4' },
+      { id: 'five5', source: 'B', target: 'D', label: 'Edge 5' }
+    ]
+  };
+
+  if (graph) {
+    graph.destroy();
+  }
+
+  graph = new EdgeCraft({
+    container: '#graph-container',
+    width: 1200,
+    height: 800,
+    renderer: {
+      type: 'canvas' // Use Canvas for advanced edge features
+    },
+    data,
+    nodeStyle: (node) => ({
+      radius: 40,
+      fill: '#4a90e2',
+      stroke: '#2c5aa0',
+      strokeWidth: 2,
+      label: {
+        text: node.label,
+        fontSize: 12,
+        color: '#333'
+      }
+    }),
+    edgeStyle: (edge) => {
+      // Color edges by bundle size for easy identification
+      const bundleInfo = graph.graph.getEdgeBundleInfo(edge.id);
+      const bundleSize = bundleInfo?.bundleSize || 1;
+      
+      let color;
+      if (bundleSize === 1) color = '#95a5a6';      // Gray - single edge
+      else if (bundleSize === 2) color = '#3498db';  // Blue - pair
+      else if (bundleSize === 3) color = '#e74c3c';  // Red - triple
+      else color = '#9b59b6';                        // Purple - many
+      
+      return {
+        stroke: color,
+        strokeWidth: 2,
+        arrow: {
+          position: 'forward',
+          size: 10,
+          shape: 'triangle',
+          filled: true
+        },
+        label: {
+          text: `${edge.label}`,
+          fontSize: 9,
+          color: '#333',
+          backgroundColor: '#fff'
+        }
+      };
+    }
+  });
+
+  // Log bundling statistics
+  console.log('Multi-Edge Bundling Statistics:');
+  console.log(graph.graph.getBundleStatistics());
+  
+  // Log individual edge bundle info
+  data.edges.forEach(edge => {
+    const info = graph.graph.getEdgeBundleInfo(edge.id);
+    console.log(`${edge.id}:`, info);
+  });
+}
+
+// Create inverse relationship test with all three modes
+function createInverseRelationshipTest() {
+  // Import data from data.js
+  const data = inverseRelationshipData;
+  
+  if (graph) {
+    graph.destroy();
+  }
+
+  graph = new EdgeCraft({
+    container: '#graph-container',
+    data: data,
+    renderer: {
+      type: 'canvas' // Use Canvas for glyph support
+    },
+    layout: {
+      type: 'force',
+      iterations: 300
+    },
+    interaction: {
+      draggable: true,
+      zoomable: true,
+      selectable: true,
+      hoverable: true,
+      showHitboxes: false
+    },
+    nodeStyle: (node) => {
+      const isSelected = node.properties?.selected || node.selected;
+      
+      return {
+        fill: isSelected ? '#667eea' : '#3498db',
+        stroke: isSelected ? '#FFD700' : '#2c3e50',
+        strokeWidth: isSelected ? 4 : 2,
+        radius: 35,
+        shape: 'circle',
+        icon: node.properties?.role?.substring(0, 1), // First letter of role
+        label: {
+          text: node.properties?.name || node.id,
+          fontSize: 12,
+          color: '#333',
+          position: 'bottom'
+        }
+      };
+    },
+    edgeStyle: (edge) => {
+      const isSelected = edge.properties?.selected || edge.selected;
+      const predicate = edge.predicate || edge.label || '';
+      
+      // Determine relationship mode
+      let relationshipMode = 'asymmetric';
+      let arrow = 'forward';
+      
+      if (edge.forwardPredicate && edge.inversePredicate) {
+        if (edge.forwardPredicate === edge.inversePredicate) {
+          // Symmetric: same predicate both directions
+          relationshipMode = 'symmetric';
+          arrow = 'both';
+        } else {
+          // Inverse: different predicates (employs/employedBy)
+          relationshipMode = 'inverse';
+          arrow = 'none'; // No arrows, glyphs will show direction
+        }
+      } else {
+        // Asymmetric: single direction, inverse not modeled
+        relationshipMode = 'asymmetric';
+        arrow = 'forward';
+      }
+      
+      // Color by predicate type
+      const predicateColors = {
+        'employs': '#e74c3c',
+        'supervises': '#f39c12',
+        'mentors': '#2ecc71',
+        'friend': '#9b59b6',
+        'reportsTo': '#3498db'
+      };
+      
+      const stroke = predicateColors[predicate] || '#95a5a6';
+      
+      return {
+        stroke: isSelected ? '#FFD700' : stroke,
+        strokeWidth: isSelected ? 4 : 2,
+        arrow: arrow,
+        relationshipMode: relationshipMode,
+        forwardPredicate: edge.forwardPredicate,
+        inversePredicate: edge.inversePredicate,
+        label: {
+          text: relationshipMode === 'symmetric' ? predicate : '', // Only show label for symmetric
+          fontSize: 10,
+          color: '#666',
+          backgroundColor: 'rgba(255,255,255,0.9)',
+          rotateWithEdge: true
+        }
+      };
+    }
+  });
+
+  // Setup graph event listeners
+  setupGraphEvents();
+  
+  // Update info panel
+  updateInfo();
+  updateRendererInfo();
+  
+  // Display legend explaining relationship modes
+  console.log('=== Inverse Relationship Modes ===');
+  console.log('Symmetric (friend): Both directions, same predicate, arrows on both ends, no glyphs');
+  console.log('Inverse (employs/employedBy): Different predicates, glyphs at ends showing direction');
+  console.log('Asymmetric (reportsTo): Single direction only, arrow forward, no glyphs (inverse not yet learned)');
 }
 
 // Renderer controls
@@ -360,10 +580,20 @@ function setupRendererControls() {
       document.querySelectorAll('[id^="renderer-"]').forEach(btn => btn.classList.remove('active'));
       this.classList.add('active');
       
-      // Set renderer and recreate graph
+      // Set renderer and recreate graph with override
       currentRenderer = type;
       const currentData = graph.getData();
-      createGraph(currentData);
+      
+      // Check if this was a knowledge graph (has complex styling)
+      const hasComplexNodes = currentData.nodes.some(n => 
+        ['Collaboration', 'Authorship', 'Employment'].includes(n.labels?.[0])
+      );
+      
+      if (hasComplexNodes) {
+        createGraphWithComplexStyling(currentData);
+      } else {
+        createGraph(currentData, type);
+      }
     });
   });
 }
@@ -403,7 +633,26 @@ function setupGraphEvents() {
   
   // Edge click - show edge details
   graph.on('edge-click', (event) => {
-    showEdgeDetails(event.target);
+    // Check if a glyph was clicked
+    const glyphHit = event.target.__glyphHit;
+    
+    if (glyphHit) {
+      console.log('=== Glyph Clicked ===');
+      console.log('Direction:', glyphHit.direction);
+      console.log('Predicate:', glyphHit.predicate);
+      console.log('Position:', glyphHit.position);
+      console.log('Edge ID:', event.target.id);
+      
+      // Show glyph-specific details
+      showEdgeDetails(event.target, glyphHit);
+    } else {
+      console.log('=== Edge Body Clicked ===');
+      console.log('Edge ID:', event.target.id);
+      
+      // Show full edge details
+      showEdgeDetails(event.target);
+    }
+    
     updateInfo();
   });
   
@@ -485,11 +734,25 @@ function hideNodeDetails() {
 }
 
 // Show edge details panel
-function showEdgeDetails(edge) {
+function showEdgeDetails(edge, glyphHit) {
   const panel = document.getElementById('node-details');
   const content = document.getElementById('details-content');
   
-  let html = `<h4>Edge Details</h4>`;
+  let html = '';
+  
+  if (glyphHit) {
+    // Glyph-specific view
+    html += `<h4>🎯 Property Glyph</h4>`;
+    html += `<p><strong>Direction:</strong> ${glyphHit.direction === 'forward' ? '→' : '←'} ${glyphHit.direction}</p>`;
+    html += `<p><strong>Predicate:</strong> <code>${glyphHit.predicate}</code></p>`;
+    html += `<p><strong>Position:</strong> ${(glyphHit.position * 100).toFixed(0)}% along edge</p>`;
+    html += `<hr style="margin: 12px 0;">`;
+    html += `<p style="font-size: 11px; color: #666;">Click elsewhere on edge to see full relationship details</p>`;
+  } else {
+    // Full edge view
+    html += `<h4>Edge Details</h4>`;
+  }
+  
   html += `<p><strong>ID:</strong> ${edge.id}</p>`;
   
   if (edge.label) {
@@ -498,6 +761,12 @@ function showEdgeDetails(edge) {
   
   if (edge.predicate) {
     html += `<p><strong>Predicate:</strong> ${edge.predicate}</p>`;
+  }
+  
+  // Show inverse predicates if present
+  if (edge.forwardPredicate && edge.inversePredicate) {
+    html += `<p><strong>Forward:</strong> ${edge.forwardPredicate}</p>`;
+    html += `<p><strong>Inverse:</strong> ${edge.inversePredicate}</p>`;
   }
   
   const sourceId = edge.source || edge.subject;
@@ -600,8 +869,13 @@ function updateInfo() {
   document.getElementById('selected-count').textContent = selectedCount;
 }
 
-// Initialize on load
-init();
+// Initialize on DOM ready
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', init);
+} else {
+  // DOM is already loaded
+  init();
+}
 
 // Create graph with complex multi-line styling
 function createGraphWithComplexStyling(data) {
@@ -628,9 +902,6 @@ function createGraphWithComplexStyling(data) {
     }
   });
   
-  // Custom rendering for multi-line labels and icons
-  customizeComplexNodes();
-  
   // Setup graph event listeners
   setupGraphEvents();
   
@@ -640,6 +911,7 @@ function createGraphWithComplexStyling(data) {
 // Complex node styling with icons and multi-line text
 function getComplexNodeStyle(node) {
   const label = node.labels?.[0];
+  const props = node.properties || {};
   
   // Color scheme based on node type
   const typeStyles = {
@@ -655,13 +927,35 @@ function getComplexNodeStyle(node) {
   
   const style = typeStyles[label] || { fill: '#95a5a6', shape: 'circle', radius: 30 };
   
+  // Build label text with secondary info
+  const mainName = props.name || props.title || String(node.id);
+  const truncatedName = mainName.length > 20 ? mainName.substring(0, 18) + '...' : mainName;
+  
+  let secondaryInfo = '';
+  if (label === 'Person' && props.title) {
+    secondaryInfo = props.title;
+  } else if (label === 'Organization' && props.type) {
+    secondaryInfo = props.type;
+  } else if (label === 'Project' && props.status) {
+    secondaryInfo = `Status: ${props.status}`;
+  } else if (label === 'Publication' && props.year) {
+    secondaryInfo = `${props.year} • ${props.citations} citations`;
+  } else if (label === 'Skill' && props.level) {
+    secondaryInfo = props.level;
+  } else if (['Collaboration', 'Authorship', 'Employment'].includes(label) && props.role) {
+    secondaryInfo = props.role;
+  }
+  
+  const labelText = secondaryInfo ? `${truncatedName}\\n${secondaryInfo}` : truncatedName;
+  
   return {
     ...style,
     stroke: '#2c3e50',
     strokeWidth: 3,
+    icon: props.icon, // Show emoji icon inside shape
     label: {
-      text: '', // We'll add custom multi-line labels manually
-      fontSize: 0,
+      text: labelText,
+      fontSize: 11,
       color: '#333',
       position: 'bottom'
     }
@@ -703,93 +997,171 @@ function getComplexEdgeStyle(edge) {
   };
 }
 
-// Add custom multi-line labels and icons to nodes
-function customizeComplexNodes() {
-  const nodes = graph.getAllNodes();
+// NOTE: customizeComplexNodes() removed - labels and icons are now handled
+// directly in getComplexNodeStyle() which works with both Canvas and WebGL renderers
+
+// Create graph showcasing advanced edge features
+function createGraphWithAdvancedEdges(data) {
+  // Destroy existing graph if any
+  if (graph) {
+    graph.destroy();
+  }
   
-  nodes.forEach(node => {
-    const nodeElement = document.querySelector(`[data-node-id="${node.id}"]`);
-    if (!nodeElement) return;
-    
-    const label = node.labels?.[0];
-    const props = node.properties || {};
-    
-    // Remove default label if exists
-    const existingLabels = nodeElement.querySelectorAll('text');
-    existingLabels.forEach(l => l.remove());
-    
-    // Add icon (emoji)
-    if (props.icon) {
-      const icon = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-      icon.setAttribute('text-anchor', 'middle');
-      icon.setAttribute('dominant-baseline', 'middle');
-      icon.setAttribute('font-size', '24');
-      icon.setAttribute('y', '0');
-      icon.textContent = props.icon;
-      nodeElement.appendChild(icon);
-    }
-    
-    // Create multi-line label below node
-    const labelGroup = document.createElementNS('http://www.w3.org/2000/svg', 'g');
-    labelGroup.setAttribute('transform', 'translate(0, 50)');
-    
-    // Main name/title (bold)
-    const mainText = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-    mainText.setAttribute('text-anchor', 'middle');
-    mainText.setAttribute('font-size', '12');
-    mainText.setAttribute('font-weight', 'bold');
-    mainText.setAttribute('fill', '#2c3e50');
-    mainText.setAttribute('y', '0');
-    
-    // Truncate long text
-    const mainName = props.name || props.title || String(node.id);
-    mainText.textContent = mainName.length > 20 ? mainName.substring(0, 18) + '...' : mainName;
-    labelGroup.appendChild(mainText);
-    
-    // Add secondary info line
-    let secondaryInfo = '';
-    if (label === 'Person' && props.title) {
-      secondaryInfo = props.title;
-    } else if (label === 'Organization' && props.type) {
-      secondaryInfo = props.type;
-    } else if (label === 'Project' && props.status) {
-      secondaryInfo = `Status: ${props.status}`;
-    } else if (label === 'Publication' && props.year) {
-      secondaryInfo = `${props.year} • ${props.citations} citations`;
-    } else if (label === 'Skill' && props.level) {
-      secondaryInfo = props.level;
-    } else if (['Collaboration', 'Authorship', 'Employment'].includes(label) && props.role) {
-      secondaryInfo = props.role;
-    }
-    
-    if (secondaryInfo) {
-      const secondaryText = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-      secondaryText.setAttribute('text-anchor', 'middle');
-      secondaryText.setAttribute('font-size', '10');
-      secondaryText.setAttribute('fill', '#7f8c8d');
-      secondaryText.setAttribute('y', '14');
-      secondaryText.textContent = secondaryInfo.length > 25 ? secondaryInfo.substring(0, 23) + '...' : secondaryInfo;
-      labelGroup.appendChild(secondaryText);
-    }
-    
-    // Add tertiary info line for associations
-    if (['Collaboration', 'Authorship', 'Employment'].includes(label)) {
-      let tertiaryInfo = '';
-      if (props.startDate) tertiaryInfo = `Since: ${props.startDate}`;
-      else if (props.contribution) tertiaryInfo = `Contribution: ${props.contribution}`;
-      else if (props.orderPosition) tertiaryInfo = `Position: ${props.orderPosition}`;
+  graph = new EdgeCraft({
+    container: '#graph-container',
+    data: data,
+    layout: { type: 'force', iterations: 200 },
+    renderer: { type: 'canvas' }, // Force canvas for advanced features
+    nodeStyle: (node) => {
+      const label = node.labels?.[0] || 'Unknown';
+      const colors = {
+        'State': '#4CAF50',
+        'Person': '#2196F3',
+        'Car': '#FF5722',
+        'Engine': '#9C27B0',
+        'Wheel': '#607D8B'
+      };
       
-      if (tertiaryInfo) {
-        const tertiaryText = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-        tertiaryText.setAttribute('text-anchor', 'middle');
-        tertiaryText.setAttribute('font-size', '9');
-        tertiaryText.setAttribute('fill', '#95a5a6');
-        tertiaryText.setAttribute('y', '26');
-        tertiaryText.textContent = tertiaryInfo;
-        labelGroup.appendChild(tertiaryText);
+      return {
+        fill: colors[label] || '#95a5a6',
+        radius: 35,
+        stroke: '#333',
+        strokeWidth: 2,
+        shape: label === 'State' ? 'circle' : 'rectangle',
+        label: {
+          text: node.properties?.name || String(node.id),
+          fontSize: 12,
+          color: '#333',
+          position: 'bottom'
+        }
+      };
+    },
+    edgeStyle: (edge) => {
+      const edgeId = edge.id;
+      
+      // Self-loops get special styling
+      if (edge.source === edge.target) {
+        return {
+          stroke: '#FF6B6B',
+          strokeWidth: 3,
+          arrow: {
+            position: 'forward',
+            size: 12,
+            shape: 'triangle',
+            filled: true
+          },
+          selfLoop: {
+            radius: 40,
+            angle: edgeId === 'self1' ? 45 : -45,  // Top-right and bottom-right
+            clockwise: true
+          },
+          label: {
+            text: edge.label,
+            fontSize: 11,
+            color: '#333',
+            backgroundColor: '#fff'
+          }
+        };
       }
+      
+      // Multi-edges between same nodes - automatically handled by MultiEdgeBundler!
+      // The bundler will intelligently distribute them with appropriate curvature
+      const multiEdgeIds = ['multi1', 'multi2', 'multi3'];
+      if (multiEdgeIds.includes(edgeId)) {
+        const index = multiEdgeIds.indexOf(edgeId);
+        
+        return {
+          stroke: ['#4CAF50', '#2196F3', '#FF9800'][index],
+          strokeWidth: 2,
+          arrow: {
+            position: 'forward',
+            size: 10,
+            shape: index === 0 ? 'triangle' : index === 1 ? 'diamond' : 'chevron',
+            filled: index !== 2
+          },
+          // MultiEdgeBundler automatically handles:
+          // - 1 edge: straight line (curvature=0)
+          // - 2 edges: both curved symmetrically
+          // - 3 edges: center straight, two curves on sides (what we have!)
+          // - N edges: dynamic curvature scaling
+          label: {
+            text: edge.label,
+            fontSize: 10,
+            color: '#333',
+            backgroundColor: '#fff'
+          }
+        };
+      }
+      
+      // Bidirectional edges (friend relationship)
+      if (edge.label === 'friend') {
+        return {
+          stroke: '#9C27B0',
+          strokeWidth: 3,
+          arrow: {
+            position: 'both',  // Arrows on both ends!
+            size: 12,
+            shape: 'circle',
+            filled: true
+          },
+          label: {
+            text: edge.label,
+            fontSize: 11,
+            color: '#333',
+            backgroundColor: '#fff'
+          }
+        };
+      }
+      
+      // RDF-style inverse relationships (hasPart/partOf)
+      if (edge.label === 'hasPart') {
+        return {
+          stroke: '#00BCD4',
+          strokeWidth: 3,
+          arrow: {
+            position: 'forward',
+            size: 12,
+            shape: 'diamond',
+            filled: true
+          },
+          label: {
+            text: edge.label + ' ➡️',
+            fontSize: 11,
+            color: '#00BCD4',
+            backgroundColor: '#fff'
+          }
+        };
+      }
+      
+      // Default directed edges (state machine transitions)
+      return {
+        stroke: '#607D8B',
+        strokeWidth: 2,
+        arrow: {
+          position: 'forward',
+          size: 10,
+          shape: 'triangle',
+          filled: true,
+          offset: 35
+        },
+        label: {
+          text: edge.label,
+          fontSize: 11,
+          color: '#333',
+          backgroundColor: '#fff'
+        }
+      };
+    },
+    interaction: {
+      draggable: true,
+      zoomable: true,
+      selectable: true,
+      hoverable: true
     }
-    
-    nodeElement.appendChild(labelGroup);
   });
+  
+  // Setup event listeners
+  setupGraphEvents();
+  startFPSMonitoring();
+  updateInfo();
 }

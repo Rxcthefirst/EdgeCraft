@@ -66,6 +66,10 @@ export class RTree {
    * Insert an item into the tree
    */
   insert(item: SpatialItem): void {
+    if (!item || !item.bounds || item.bounds.width <= 0 || item.bounds.height <= 0) {
+      console.warn('RTree: Attempted to insert invalid item', item);
+      return;
+    }
     this.insertItem(item, this.root, this.root.height - 1);
   }
 
@@ -140,16 +144,20 @@ export class RTree {
       const node = current.node;
       if (node.isLeaf) {
         for (const item of node.items) {
-          const dist = this.distanceToPoint(point, item.bounds);
-          if (dist <= maxDistance) {
-            queue.push({ node, dist, isItem: true, item });
+          if (item && item.bounds) {
+            const dist = this.distanceToPoint(point, item.bounds);
+            if (dist <= maxDistance) {
+              queue.push({ node, dist, isItem: true, item });
+            }
           }
         }
       } else {
         for (const child of node.children) {
-          const dist = this.minDistanceToBox(point, child.bounds);
-          if (dist <= maxDistance) {
-            queue.push({ node: child, dist });
+          if (child && child.bounds) {
+            const dist = this.minDistanceToBox(point, child.bounds);
+            if (dist <= maxDistance) {
+              queue.push({ node: child, dist });
+            }
           }
         }
       }
@@ -312,7 +320,7 @@ export class RTree {
 
     if (node.isLeaf) {
       for (const item of node.items) {
-        if (this.intersects(bounds, item.bounds)) {
+        if (item && item.bounds && this.intersects(bounds, item.bounds)) {
           results.push(item);
         }
       }
@@ -352,7 +360,7 @@ export class RTree {
   private updateBounds(node: RTreeNode): void {
     if (node.isLeaf) {
       // Filter out any null/undefined items
-      const validItems = node.items.filter(item => item != null);
+      const validItems = node.items.filter(item => item != null && item.bounds != null);
       if (validItems.length === 0) {
         node.bounds = { x: 0, y: 0, width: 0, height: 0 };
       } else {

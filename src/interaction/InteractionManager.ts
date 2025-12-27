@@ -30,6 +30,14 @@ export class InteractionManager {
   private currentTransform: { x: number; y: number; scale: number };
   private originalNodeStyles: Map<string | number, any>;
   private originalEdgeStyles: Map<string | number, any>;
+  private boundHandlers: {
+    mousedown?: (event: MouseEvent) => void;
+    mousemove?: (event: MouseEvent) => void;
+    mouseup?: (event: MouseEvent) => void;
+    click?: (event: MouseEvent) => void;
+    contextmenu?: (event: MouseEvent) => void;
+  };
+  private container?: HTMLElement;
 
   constructor(
     renderer: IRenderer,
@@ -58,6 +66,8 @@ export class InteractionManager {
     this.dragStartPos = null;
     this.hoveredNode = null;
     this.hoveredEdge = null;
+    this.boundHandlers = {};
+    this.container = undefined;
     this.currentTransform = { x: 0, y: 0, scale: 1 };
     this.originalNodeStyles = new Map();
     this.originalEdgeStyles = new Map();
@@ -110,14 +120,22 @@ export class InteractionManager {
       d3.select(container).call(this.zoomBehavior);
     }
     
-    // Setup mouse interactions for nodes (use capture phase for priority)
-    container.addEventListener('mousedown', (event) => this.handleMouseDown(event), true);
-    container.addEventListener('mousemove', (event) => this.handleMouseMove(event), false);
-    container.addEventListener('mouseup', (event) => this.handleMouseUp(event), false);
-    container.addEventListener('click', (event) => this.handleClick(event), false);
+    // Store container reference for cleanup
+    this.container = container;
     
-    // Prevent context menu
-    container.addEventListener('contextmenu', (event) => event.preventDefault());
+    // Setup mouse interactions for nodes (use capture phase for priority)
+    // Store bound handlers so we can remove them later
+    this.boundHandlers.mousedown = (event) => this.handleMouseDown(event);
+    this.boundHandlers.mousemove = (event) => this.handleMouseMove(event);
+    this.boundHandlers.mouseup = (event) => this.handleMouseUp(event);
+    this.boundHandlers.click = (event) => this.handleClick(event);
+    this.boundHandlers.contextmenu = (event) => event.preventDefault();
+    
+    container.addEventListener('mousedown', this.boundHandlers.mousedown, true);
+    container.addEventListener('mousemove', this.boundHandlers.mousemove, false);
+    container.addEventListener('mouseup', this.boundHandlers.mouseup, false);
+    container.addEventListener('click', this.boundHandlers.click, false);
+    container.addEventListener('contextmenu', this.boundHandlers.contextmenu);
   }
 
   private handleMouseDown(event: MouseEvent): void {
@@ -412,6 +430,21 @@ export class InteractionManager {
   private getEdgeAtPosition(worldPos: Position): GraphEdge | null {
     const threshold = 15 / this.currentTransform.scale; // Larger threshold for easier selection
     
+    // First check if clicking on a glyph
+    const glyphHit = this.getGlyphAtPosition(worldPos);
+    if (glyphHit) {
+      // Return edge but with glyph metadata
+      const edge = this.edges.get(glyphHit.edgeId);
+      if (edge) {
+        (edge as any).__glyphHit = {
+          direction: glyphHit.direction,
+          predicate: glyphHit.predicate,
+          position: glyphHit.position
+        };
+        return edge;
+      }
+    }
+    
     // Use spatial index for O(log n) lookup
     const candidates = this.graph.getEdgesNearPoint(worldPos, threshold);
     
@@ -424,28 +457,36 @@ export class InteractionManager {
       
       if (!sourcePos || !targetPos) continue;
       
-      // Check if clicking on edge label (if edge has label)
-      if ('label' in edge || ('properties' in edge && (edge as any).properties?.label)) {
-        const midX = (sourcePos.x + targetPos.x) / 2;
-        const midY = (sourcePos.y + targetPos.y) / 2;
-        const labelThreshold = 30; // Pixels around label center
-        
-        const dx = worldPos.x - midX;
-        const dy = worldPos.y - midY;
-        const distToLabel = Math.sqrt(dx * dx + dy * dy);
-        
-        if (distToLabel <= labelThreshold) {
-          return edge;
-        }
-      }
+      // Get bundle info and edge style to check if it's curved
+      const bundleInfo = this.graph.getEdgeBundleInfo(edge.id);
+      const edgeStyle = this.graph.getEdgeStyle(edge.id);
       
-      // Get edge style to check if it's curved
-      const edgeStyle = 'properties' in edge ? (edge as any).properties?.curveStyle : undefined;
+      // Determine if edge is curved
+      const curvature = bundleInfo?.curvature ?? edgeStyle?.curvature ?? 0;
+      const parallelOffset = bundleInfo?.parallelOffset ?? edgeStyle?.parallelOffset ?? 0;
+      const isCurved = curvature !== 0 || parallelOffset !== 0;
+      
       let dist: number;
       
-      if (edgeStyle === 'bezier') {
-        // Calculate control point for bezier curve
-        const controlPoint = this.calculateBezierControlPoint(sourcePos, targetPos);
+      if (isCurved) {
+        // Calculate control point for bezier curve with bundler's curvature and offset
+        const dx = targetPos.x - sourcePos.x;
+        const dy = targetPos.y - sourcePos.y;
+        const distance = Math.sqrt(dx * dx + dy * dy);
+        
+        if (distance < 1) continue;
+        
+        const midX = (sourcePos.x + targetPos.x) / 2;
+        const midY = (sourcePos.y + targetPos.y) / 2;
+        
+        // Perpendicular offset for multi-edges
+        const perpX = -dy / distance;
+        const perpY = dx / distance;
+        
+        const controlX = midX + (-dy * curvature) + (perpX * parallelOffset);
+        const controlY = midY + (dx * curvature) + (perpY * parallelOffset);
+        
+        const controlPoint = { x: controlX, y: controlY };
         dist = this.distanceToQuadraticBezier(worldPos, sourcePos, controlPoint, targetPos);
       } else {
         // Straight line
@@ -454,6 +495,122 @@ export class InteractionManager {
       
       if (dist <= threshold) {
         return edge;
+      }
+    }
+    
+    return null;
+  }
+
+  /**
+   * Check if position is over an edge glyph
+   */
+  private getGlyphAtPosition(worldPos: Position): { 
+    edgeId: string | number; 
+    direction: 'forward' | 'backward'; 
+    predicate: string;
+    position: number;
+  } | null {
+    const glyphThreshold = 12 / this.currentTransform.scale; // Slightly larger than glyph radius
+    
+    // Check all edges for glyphs
+    for (const edge of this.edges.values()) {
+      const sourceId = 'source' in edge ? edge.source : (edge as any).subject;
+      const targetId = 'target' in edge ? edge.target : (edge as any).object;
+      
+      const sourcePos = this.positions.get(sourceId);
+      const targetPos = this.positions.get(targetId);
+      
+      if (!sourcePos || !targetPos) continue;
+      
+      const edgeStyle = this.graph.getEdgeStyle(edge.id);
+      if (!edgeStyle) continue;
+      
+      // Get glyphs from style or auto-generate for inverse relationships
+      let glyphs: any[] = [];
+      
+      if (edgeStyle.glyphs && edgeStyle.glyphs.length > 0) {
+        glyphs = edgeStyle.glyphs;
+      } else if (edgeStyle.relationshipMode === 'inverse' && edgeStyle.forwardPredicate && edgeStyle.inversePredicate) {
+        glyphs = [
+          {
+            position: 0.15,
+            text: edgeStyle.forwardPredicate,
+            size: 16,
+            direction: 'forward'
+          },
+          {
+            position: 0.85,
+            text: edgeStyle.inversePredicate,
+            size: 16,
+            direction: 'backward'
+          }
+        ];
+      }
+      
+      if (glyphs.length === 0) continue;
+      
+      // Get bundle info for curvature
+      const bundleInfo = this.graph.getEdgeBundleInfo(edge.id);
+      const curvature = bundleInfo?.curvature ?? edgeStyle.curvature ?? 0;
+      const parallelOffset = bundleInfo?.parallelOffset ?? edgeStyle.parallelOffset ?? 0;
+      const isCurved = curvature !== 0 || parallelOffset !== 0;
+      
+      // Calculate control point if curved
+      let controlPoint: { x: number; y: number } | null = null;
+      if (isCurved) {
+        const dx = targetPos.x - sourcePos.x;
+        const dy = targetPos.y - sourcePos.y;
+        const distance = Math.sqrt(dx * dx + dy * dy);
+        
+        if (distance >= 1) {
+          const midX = (sourcePos.x + targetPos.x) / 2;
+          const midY = (sourcePos.y + targetPos.y) / 2;
+          const perpX = -dy / distance;
+          const perpY = dx / distance;
+          
+          controlPoint = {
+            x: midX + (-dy * curvature) + (perpX * parallelOffset),
+            y: midY + (dx * curvature) + (perpY * parallelOffset)
+          };
+        }
+      }
+      
+      // Check each glyph
+      for (const glyph of glyphs) {
+        const t = glyph.position || 0.5;
+        let glyphPos: Position;
+        
+        if (controlPoint) {
+          // Bezier curve position
+          const u = 1 - t;
+          const tt = t * t;
+          const uu = u * u;
+          
+          glyphPos = {
+            x: uu * sourcePos.x + 2 * u * t * controlPoint.x + tt * targetPos.x,
+            y: uu * sourcePos.y + 2 * u * t * controlPoint.y + tt * targetPos.y
+          };
+        } else {
+          // Straight line position
+          glyphPos = {
+            x: sourcePos.x + (targetPos.x - sourcePos.x) * t,
+            y: sourcePos.y + (targetPos.y - sourcePos.y) * t
+          };
+        }
+        
+        // Check distance to glyph center
+        const dx = worldPos.x - glyphPos.x;
+        const dy = worldPos.y - glyphPos.y;
+        const distance = Math.sqrt(dx * dx + dy * dy);
+        
+        if (distance <= glyphThreshold) {
+          return {
+            edgeId: edge.id,
+            direction: glyph.direction || 'forward',
+            predicate: glyph.text || glyph.icon || '',
+            position: t
+          };
+        }
       }
     }
     
@@ -878,5 +1035,49 @@ export class InteractionManager {
 
     // Re-render to show the hitbox
     this.renderer.render();
+  }
+
+  /**
+   * Clean up event listeners and references
+   */
+  destroy(): void {
+    // Remove event listeners
+    if (this.container && this.boundHandlers) {
+      if (this.boundHandlers.mousedown) {
+        this.container.removeEventListener('mousedown', this.boundHandlers.mousedown, true);
+      }
+      if (this.boundHandlers.mousemove) {
+        this.container.removeEventListener('mousemove', this.boundHandlers.mousemove, false);
+      }
+      if (this.boundHandlers.mouseup) {
+        this.container.removeEventListener('mouseup', this.boundHandlers.mouseup, false);
+      }
+      if (this.boundHandlers.click) {
+        this.container.removeEventListener('click', this.boundHandlers.click, false);
+      }
+      if (this.boundHandlers.contextmenu) {
+        this.container.removeEventListener('contextmenu', this.boundHandlers.contextmenu);
+      }
+    }
+    
+    // Remove d3 zoom behavior
+    if (this.zoomBehavior && this.container) {
+      d3.select(this.container).on('.zoom', null);
+    }
+    
+    // Clear all event listeners
+    this.eventListeners.clear();
+    
+    // Clear selections
+    this.selectedNodes.clear();
+    this.selectedEdges.clear();
+    
+    // Clear references
+    this.boundHandlers = {};
+    this.container = undefined;
+    this.draggedNode = null;
+    this.dragStartPos = null;
+    this.hoveredNode = null;
+    this.hoveredEdge = null;
   }
 }

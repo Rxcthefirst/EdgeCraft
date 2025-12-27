@@ -1,5 +1,6 @@
 import { GraphNode, GraphEdge, NodeStyle, EdgeStyle } from '../types';
 import { IRenderer, RendererMetrics } from './IRenderer';
+import { Graph } from '../core/Graph';
 
 interface BoundingBox {
   x: number;
@@ -39,6 +40,7 @@ export class CanvasRenderer implements IRenderer {
   private width: number;
   private height: number;
   private enableDirtyRegions: boolean;
+  private graph?: Graph; // Reference to graph for multi-edge bundling
   
   // Performance metrics
   private metrics: RendererMetrics;
@@ -120,6 +122,13 @@ export class CanvasRenderer implements IRenderer {
 
     // Draw background
     this.renderBackground();
+  }
+
+  /**
+   * Set graph reference for multi-edge bundling support
+   */
+  setGraph(graph: Graph): void {
+    this.graph = graph;
   }
 
   private renderBackground(): void {
@@ -483,6 +492,14 @@ export class CanvasRenderer implements IRenderer {
     const sourceId = 'source' in edge ? edge.source : (edge as any).subject;
     const targetId = 'target' in edge ? edge.target : (edge as any).object;
     
+    // Check for self-loop
+    const isSelfLoop = sourceId === targetId;
+    
+    if (isSelfLoop) {
+      this.renderSelfLoop(ctx, edge, style);
+      return;
+    }
+    
     const sourceNode = this.nodes.get(sourceId);
     const targetNode = this.nodes.get(targetId);
     
@@ -513,50 +530,206 @@ export class CanvasRenderer implements IRenderer {
       return;
     }
 
-    // Use curvature from style (0 = straight line, 0.2 = default curve)
-    const curvature = style.curvature !== undefined ? style.curvature : 0.2;
+    // Get bundle info from graph for intelligent multi-edge handling
+    const bundleInfo = this.graph?.getEdgeBundleInfo(edge.id);
+    
+    // Use bundle curvature and offset if available, otherwise fall back to style
+    const curvature = bundleInfo?.curvature ?? (style.curvature !== undefined ? style.curvature : 0.2);
+    const parallelOffset = bundleInfo?.parallelOffset ?? (style.parallelOffset || 0);
+    
+    // Cache style in graph for accurate spatial index bounds
+    if (this.graph && (curvature !== 0 || parallelOffset !== 0)) {
+      this.graph.setEdgeStyle(edge.id, { ...style, curvature, parallelOffset });
+    }
     
     // Draw edge path
     ctx.beginPath();
     ctx.moveTo(sx, sy);
     
-    if (curvature === 0) {
+    let endX = tx;
+    let endY = ty;
+    let controlX = 0;
+    let controlY = 0;
+    
+    if (curvature === 0 && parallelOffset === 0) {
       // Straight line
       ctx.lineTo(tx, ty);
     } else {
-      // Curved line
+      // Curved line with optional offset
       const midX = (sx + tx) / 2;
       const midY = (sy + ty) / 2;
-      const controlX = midX - dy * curvature;
-      const controlY = midY + dx * curvature;
+      
+      // Perpendicular offset for multi-edges
+      const perpX = -dy / distance;
+      const perpY = dx / distance;
+      
+      controlX = midX + (-dy * curvature) + (perpX * parallelOffset);
+      controlY = midY + (dx * curvature) + (perpY * parallelOffset);
+      
       ctx.quadraticCurveTo(controlX, controlY, tx, ty);
+      endX = tx;
+      endY = ty;
     }
     ctx.stroke();
 
-    // Draw arrows
-    if (style.arrow === 'forward' || style.arrow === 'both') {
-      if (curvature === 0) {
-        this.drawArrow(ctx, sx, sy, tx, ty, style.strokeWidth || 2);
+    // Draw arrows with new ArrowConfig support
+    const arrowConfig = this.normalizeArrowConfig(style.arrow);
+    
+    if (arrowConfig.position === 'forward' || arrowConfig.position === 'both') {
+      if (curvature === 0 && parallelOffset === 0) {
+        this.drawArrowHead(ctx, sx, sy, tx, ty, arrowConfig);
       } else {
-        const midX = (sx + tx) / 2;
-        const midY = (sy + ty) / 2;
-        const controlX = midX - dy * curvature;
-        const controlY = midY + dx * curvature;
-        this.drawArrow(ctx, controlX, controlY, tx, ty, style.strokeWidth || 2);
+        // For curved edges, calculate tangent at end point
+        const t = 0.95; // Draw arrow slightly before end
+        const bezierPoint = this.getQuadraticBezierPoint(sx, sy, controlX, controlY, tx, ty, t);
+        const tangent = this.getQuadraticBezierTangent(sx, sy, controlX, controlY, tx, ty, 1.0);
+        this.drawArrowHeadAtPoint(ctx, bezierPoint.x, bezierPoint.y, tangent.angle, arrowConfig);
       }
     }
-    if (style.arrow === 'backward' || style.arrow === 'both') {
-      if (curvature === 0) {
-        this.drawArrow(ctx, tx, ty, sx, sy, style.strokeWidth || 2);
+    
+    if (arrowConfig.position === 'backward' || arrowConfig.position === 'both') {
+      if (curvature === 0 && parallelOffset === 0) {
+        this.drawArrowHead(ctx, tx, ty, sx, sy, arrowConfig);
       } else {
-        const midX = (sx + tx) / 2;
-        const midY = (sy + ty) / 2;
-        const controlX = midX - dy * curvature;
-        const controlY = midY + dx * curvature;
-        this.drawArrow(ctx, controlX, controlY, sx, sy, style.strokeWidth || 2);
+        const t = 0.05; // Draw arrow slightly after start
+        const bezierPoint = this.getQuadraticBezierPoint(sx, sy, controlX, controlY, tx, ty, t);
+        const tangent = this.getQuadraticBezierTangent(sx, sy, controlX, controlY, tx, ty, 0.0);
+        this.drawArrowHeadAtPoint(ctx, bezierPoint.x, bezierPoint.y, tangent.angle + Math.PI, arrowConfig);
       }
     }
 
+    // Render glyphs for inverse relationships
+    if (style.glyphs && style.glyphs.length > 0) {
+      style.glyphs.forEach(glyph => {
+        if (curvature === 0 && parallelOffset === 0) {
+          this.renderGlyph(ctx, glyph, sx, sy, tx, ty, null);
+        } else {
+          this.renderGlyph(ctx, glyph, sx, sy, tx, ty, { x: controlX, y: controlY });
+        }
+      });
+    } else if (style.relationshipMode === 'inverse' && style.forwardPredicate && style.inversePredicate) {
+      // Auto-generate glyphs for inverse relationships
+      const sourceGlyph: any = {
+        position: 0.15,
+        text: style.forwardPredicate,
+        shape: 'square',
+        size: 16,
+        fill: style.stroke || '#95a5a6',
+        stroke: '#ffffff',
+        interactive: true,
+        direction: 'forward'
+      };
+      
+      const targetGlyph: any = {
+        position: 0.85,
+        text: style.inversePredicate,
+        shape: 'square',
+        size: 16,
+        fill: style.stroke || '#95a5a6',
+        stroke: '#ffffff',
+        interactive: true,
+        direction: 'backward'
+      };
+      
+      if (curvature === 0 && parallelOffset === 0) {
+        this.renderGlyph(ctx, sourceGlyph, sx, sy, tx, ty, null);
+        this.renderGlyph(ctx, targetGlyph, sx, sy, tx, ty, null);
+      } else {
+        this.renderGlyph(ctx, sourceGlyph, sx, sy, tx, ty, { x: controlX, y: controlY });
+        this.renderGlyph(ctx, targetGlyph, sx, sy, tx, ty, { x: controlX, y: controlY });
+      }
+    }
+
+    ctx.restore();
+  }
+
+  /**
+   * Render a glyph on an edge
+   */
+  private renderGlyph(
+    ctx: CanvasRenderingContext2D,
+    glyph: any,
+    startX: number,
+    startY: number,
+    endX: number,
+    endY: number,
+    controlPoint: { x: number; y: number } | null
+  ): void {
+    const t = glyph.position || 0.5;
+    
+    // Calculate point and tangent on edge
+    let point: { x: number; y: number };
+    let angle: number;
+    
+    if (controlPoint) {
+      // Quadratic bezier curve
+      point = this.getQuadraticBezierPoint(startX, startY, controlPoint.x, controlPoint.y, endX, endY, t);
+      const tangent = this.getQuadraticBezierTangent(startX, startY, controlPoint.x, controlPoint.y, endX, endY, t);
+      angle = tangent.angle;
+    } else {
+      // Straight line
+      point = {
+        x: startX + (endX - startX) * t,
+        y: startY + (endY - startY) * t
+      };
+      angle = Math.atan2(endY - startY, endX - startX);
+    }
+    
+    ctx.save();
+    ctx.translate(point.x, point.y);
+    
+    // Keep glyph upright
+    let rotation = angle;
+    if (Math.abs(angle) > Math.PI / 2) {
+      rotation = angle + Math.PI;
+    }
+    ctx.rotate(rotation);
+    
+    const size = glyph.size || 16;
+    const halfSize = size / 2;
+    
+    // Draw glyph shape
+    ctx.fillStyle = glyph.fill || '#95a5a6';
+    ctx.strokeStyle = glyph.stroke || '#ffffff';
+    ctx.lineWidth = 2;
+    
+    ctx.beginPath();
+    
+    switch (glyph.shape) {
+      case 'circle':
+        ctx.arc(0, 0, halfSize, 0, Math.PI * 2);
+        break;
+        
+      case 'diamond':
+        ctx.moveTo(0, -halfSize);
+        ctx.lineTo(halfSize, 0);
+        ctx.lineTo(0, halfSize);
+        ctx.lineTo(-halfSize, 0);
+        ctx.closePath();
+        break;
+        
+      case 'square':
+      default:
+        ctx.rect(-halfSize, -halfSize, size, size);
+        break;
+    }
+    
+    ctx.fill();
+    ctx.stroke();
+    
+    // Draw text/icon inside glyph
+    if (glyph.text || glyph.icon) {
+      ctx.fillStyle = '#ffffff';
+      ctx.font = `${size * 0.5}px Arial`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      
+      const displayText = glyph.text || glyph.icon;
+      // Truncate to first 3 chars for compact display
+      const truncated = displayText.length > 3 ? displayText.substring(0, 3) : displayText;
+      ctx.fillText(truncated, 0, 0);
+    }
+    
     ctx.restore();
   }
 
@@ -583,6 +756,243 @@ export class CanvasRenderer implements IRenderer {
     ctx.restore();
   }
 
+  /**
+   * Normalize arrow configuration to ArrowConfig object
+   */
+  private normalizeArrowConfig(arrow: any): { position: string; size: number; shape: string; filled: boolean; offset: number } {
+    if (!arrow || arrow === 'none') {
+      return { position: 'none', size: 10, shape: 'triangle', filled: true, offset: 20 };
+    }
+    
+    if (typeof arrow === 'string') {
+      return { position: arrow, size: 10, shape: 'triangle', filled: true, offset: 20 };
+    }
+    
+    return {
+      position: arrow.position || 'forward',
+      size: arrow.size || 10,
+      shape: arrow.shape || 'triangle',
+      filled: arrow.filled !== false,
+      offset: arrow.offset || 20
+    };
+  }
+
+  /**
+   * Draw arrow head at specific point with angle
+   */
+  private drawArrowHeadAtPoint(
+    ctx: CanvasRenderingContext2D,
+    x: number,
+    y: number,
+    angle: number,
+    config: { size: number; shape: string; filled: boolean }
+  ): void {
+    const size = config.size;
+    
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(angle);
+    
+    ctx.beginPath();
+    
+    switch (config.shape) {
+      case 'triangle':
+        ctx.moveTo(0, 0);
+        ctx.lineTo(-size, -size / 2);
+        ctx.lineTo(-size, size / 2);
+        ctx.closePath();
+        break;
+        
+      case 'chevron':
+        ctx.moveTo(0, 0);
+        ctx.lineTo(-size, -size / 2);
+        ctx.moveTo(0, 0);
+        ctx.lineTo(-size, size / 2);
+        break;
+        
+      case 'diamond':
+        ctx.moveTo(0, 0);
+        ctx.lineTo(-size * 0.7, -size / 2);
+        ctx.lineTo(-size * 1.4, 0);
+        ctx.lineTo(-size * 0.7, size / 2);
+        ctx.closePath();
+        break;
+        
+      case 'circle':
+        ctx.arc(-size / 2, 0, size / 2, 0, Math.PI * 2);
+        break;
+    }
+    
+    if (config.filled && config.shape !== 'chevron') {
+      ctx.fillStyle = ctx.strokeStyle;
+      ctx.fill();
+    }
+    
+    if (!config.filled || config.shape === 'chevron') {
+      ctx.stroke();
+    }
+    
+    ctx.restore();
+  }
+
+  /**
+   * Draw arrow head between two points
+   */
+  private drawArrowHead(
+    ctx: CanvasRenderingContext2D,
+    fromX: number,
+    fromY: number,
+    toX: number,
+    toY: number,
+    config: { size: number; shape: string; filled: boolean; offset: number }
+  ): void {
+    const angle = Math.atan2(toY - fromY, toX - fromX);
+    
+    // Position arrow at offset from target
+    const arrowX = toX - Math.cos(angle) * config.offset;
+    const arrowY = toY - Math.sin(angle) * config.offset;
+    
+    this.drawArrowHeadAtPoint(ctx, arrowX, arrowY, angle, config);
+  }
+
+  /**
+   * Render self-loop edge
+   */
+  private renderSelfLoop(ctx: CanvasRenderingContext2D, edge: any, style: any): void {
+    const sourceId = 'source' in edge ? edge.source : edge.subject;
+    const sourceNode = this.nodes.get(sourceId);
+    
+    if (!sourceNode) return;
+    
+    const x = (sourceNode.node as any).x || 0;
+    const y = (sourceNode.node as any).y || 0;
+    const nodeRadius = sourceNode.style.radius || 30;
+    
+    const loopConfig = style.selfLoop || {};
+    const loopRadius = loopConfig.radius || 35;
+    const angle = ((loopConfig.angle || 45) * Math.PI / 180);  // Default 45 degrees (top-right)
+    const clockwise = loopConfig.clockwise !== false;
+    
+    ctx.save();
+    
+    ctx.strokeStyle = style.stroke || '#95a5a6';
+    ctx.lineWidth = style.strokeWidth || 2;
+    
+    if (style.strokeDasharray) {
+      const dashArray = style.strokeDasharray.split(',').map((v: string) => parseFloat(v.trim()));
+      ctx.setLineDash(dashArray);
+    }
+    
+    // Calculate attachment points on node circle - closer together for more circular loop
+    const attachmentSpread = Math.PI / 6; // 30 degrees spread
+    const startAngle = angle - attachmentSpread;
+    const endAngle = angle + attachmentSpread;
+    
+    const startX = x + nodeRadius * Math.cos(startAngle);
+    const startY = y + nodeRadius * Math.sin(startAngle);
+    const endX = x + nodeRadius * Math.cos(endAngle);
+    const endY = y + nodeRadius * Math.sin(endAngle);
+    
+    // Control points for cubic bezier - positioned to create circular arc
+    // The key is to place control points further out and at wider angles
+    const controlDistance = nodeRadius + loopRadius;
+    const controlSpread = Math.PI / 2.5; // Control points spread wider for circular shape
+    
+    const control1Angle = angle - controlSpread;
+    const control2Angle = angle + controlSpread;
+    
+    const control1X = x + controlDistance * Math.cos(control1Angle);
+    const control1Y = y + controlDistance * Math.sin(control1Angle);
+    const control2X = x + controlDistance * Math.cos(control2Angle);
+    const control2Y = y + controlDistance * Math.sin(control2Angle);
+    
+    // Draw cubic bezier curve
+    ctx.beginPath();
+    ctx.moveTo(startX, startY);
+    ctx.bezierCurveTo(control1X, control1Y, control2X, control2Y, endX, endY);
+    ctx.stroke();
+    
+    // Draw arrow at end if configured
+    const arrowConfig = this.normalizeArrowConfig(style.arrow);
+    
+    if (arrowConfig.position === 'forward' || arrowConfig.position === 'both') {
+      // Calculate tangent at end point for arrow direction
+      const t = 1.0;
+      const tangentAngle = this.getCubicBezierTangentAngle(
+        startX, startY, control1X, control1Y,
+        control2X, control2Y, endX, endY, t
+      );
+      this.drawArrowHeadAtPoint(ctx, endX, endY, tangentAngle, arrowConfig);
+    }
+    
+    if (arrowConfig.position === 'backward' || arrowConfig.position === 'both') {
+      const t = 0.0;
+      const tangentAngle = this.getCubicBezierTangentAngle(
+        startX, startY, control1X, control1Y,
+        control2X, control2Y, endX, endY, t
+      ) + Math.PI;
+      this.drawArrowHeadAtPoint(ctx, startX, startY, tangentAngle, arrowConfig);
+    }
+    
+    ctx.restore();
+  }
+
+  /**
+   * Get point on quadratic bezier curve at t (0 to 1)
+   */
+  private getQuadraticBezierPoint(
+    x0: number, y0: number,
+    x1: number, y1: number,
+    x2: number, y2: number,
+    t: number
+  ): { x: number; y: number } {
+    const u = 1 - t;
+    const tt = t * t;
+    const uu = u * u;
+    
+    return {
+      x: uu * x0 + 2 * u * t * x1 + tt * x2,
+      y: uu * y0 + 2 * u * t * y1 + tt * y2
+    };
+  }
+
+  /**
+   * Get tangent angle on quadratic bezier curve at t (0 to 1)
+   */
+  private getQuadraticBezierTangent(
+    x0: number, y0: number,
+    x1: number, y1: number,
+    x2: number, y2: number,
+    t: number
+  ): { angle: number } {
+    const u = 1 - t;
+    
+    const dx = 2 * u * (x1 - x0) + 2 * t * (x2 - x1);
+    const dy = 2 * u * (y1 - y0) + 2 * t * (y2 - y1);
+    
+    return { angle: Math.atan2(dy, dx) };
+  }
+
+  /**
+   * Get tangent angle on cubic bezier curve at t (0 to 1)
+   */
+  private getCubicBezierTangentAngle(
+    x0: number, y0: number,
+    x1: number, y1: number,
+    x2: number, y2: number,
+    x3: number, y3: number,
+    t: number
+  ): number {
+    const u = 1 - t;
+    const uu = u * u;
+    const tt = t * t;
+    
+    const dx = 3 * uu * (x1 - x0) + 6 * u * t * (x2 - x1) + 3 * tt * (x3 - x2);
+    const dy = 3 * uu * (y1 - y0) + 6 * u * t * (y2 - y1) + 3 * tt * (y3 - y2);
+    
+    return Math.atan2(dy, dx);
+  }
+
   private renderEdgeLabel(ctx: CanvasRenderingContext2D, cached: CachedEdge): void {
     const { edge, style } = cached;
     
@@ -604,20 +1014,31 @@ export class CanvasRenderer implements IRenderer {
     // Calculate label position at edge midpoint
     const dx = tx - sx;
     const dy = ty - sy;
-    const curvature = style.curvature !== undefined ? style.curvature : 0.2;
+    
+    // Get curvature from bundler (same logic as renderEdge)
+    const bundleInfo = this.graph?.getEdgeBundleInfo(edge.id);
+    const curvature = bundleInfo?.curvature ?? (style.curvature !== undefined ? style.curvature : 0.2);
+    const parallelOffset = bundleInfo?.parallelOffset ?? (style.parallelOffset || 0);
     
     let labelX: number, labelY: number;
     
-    if (curvature === 0) {
+    if (curvature === 0 && parallelOffset === 0) {
       // Straight line - use simple midpoint
       labelX = (sx + tx) / 2;
       labelY = (sy + ty) / 2;
     } else {
       // Curved line - use bezier midpoint
+      const distance = Math.sqrt(dx * dx + dy * dy);
       const midX = (sx + tx) / 2;
       const midY = (sy + ty) / 2;
-      const controlX = midX - dy * curvature;
-      const controlY = midY + dx * curvature;
+      
+      // Perpendicular offset for multi-edges
+      const perpX = distance > 0 ? -dy / distance : 0;
+      const perpY = distance > 0 ? dx / distance : 0;
+      
+      const controlX = midX + (-dy * curvature) + (perpX * parallelOffset);
+      const controlY = midY + (dx * curvature) + (perpY * parallelOffset);
+      
       // Bezier curve midpoint at t=0.5
       labelX = (sx + 2 * controlX + tx) / 4;
       labelY = (sy + 2 * controlY + ty) / 4;

@@ -56,6 +56,11 @@ export class EdgeCraft {
     
     this.renderer.initialize();
     
+    // Set graph reference in renderer for multi-edge bundling support
+    if ('setGraph' in this.renderer && typeof this.renderer.setGraph === 'function') {
+      (this.renderer as any).setGraph(this.graph);
+    }
+    
     // Log which renderer was chosen
     const rendererType = this.renderer.getType();
     console.log(`EdgeCraft: Using ${rendererType.toUpperCase()} renderer (${nodeCount} nodes)`);
@@ -407,6 +412,9 @@ export class EdgeCraft {
       this.interactionManager.off('selection-changed' as any, this.selectionChangedHandler);
       this.selectionChangedHandler = null;
     }
+    
+    // Destroy interaction manager (removes event listeners)
+    this.interactionManager.destroy();
     
     // Dispose renderer (removes canvases)
     this.renderer.dispose();

@@ -13,8 +13,11 @@ import {
   RDFNode,
   RDFTriple,
   AssociationClass,
+  EdgeStyle,
 } from '../types';
 import { RTree, BoundingBox, Point } from './RTree';
+import { MultiEdgeBundler, EdgeBundleInfo, BundleConfig } from './MultiEdgeBundler';
+import { getQuadraticBezierBounds } from './BezierUtils';
 
 export class Graph {
   private nodes: Map<NodeId, GraphNode>;
@@ -22,6 +25,8 @@ export class Graph {
   private associationClasses: Map<NodeId, AssociationClass>;
   private adjacencyList: Map<NodeId, Set<EdgeId>>;
   private spatialIndex: RTree;
+  private bundler: MultiEdgeBundler;
+  private edgeStyles: Map<EdgeId, EdgeStyle>; // Cache of edge styles from renderer
 
   constructor(data?: GraphData) {
     this.nodes = new Map();
@@ -29,6 +34,8 @@ export class Graph {
     this.associationClasses = new Map();
     this.adjacencyList = new Map();
     this.spatialIndex = new RTree();
+    this.bundler = new MultiEdgeBundler();
+    this.edgeStyles = new Map();
 
     if (data) {
       this.setData(data);
@@ -74,11 +81,14 @@ export class Graph {
     }
     
     // Add to spatial index
-    this.spatialIndex.insert({
-      id: node.id,
-      type: 'node',
-      bounds: this.calculateNodeBounds(node)
-    });
+    const bounds = this.calculateNodeBounds(node);
+    if (bounds && bounds.width > 0 && bounds.height > 0) {
+      this.spatialIndex.insert({
+        id: node.id,
+        type: 'node',
+        bounds
+      });
+    }
   }
 
   removeNode(nodeId: NodeId): boolean {
@@ -117,11 +127,14 @@ export class Graph {
     // Update spatial index if position changed
     if (updates.hasOwnProperty('x') || updates.hasOwnProperty('y')) {
       this.spatialIndex.remove(nodeId);
-      this.spatialIndex.insert({
-        id: nodeId,
-        type: 'node',
-        bounds: this.calculateNodeBounds(updatedNode)
-      });
+      const bounds = this.calculateNodeBounds(updatedNode);
+      if (bounds && bounds.width > 0 && bounds.height > 0) {
+        this.spatialIndex.insert({
+          id: nodeId,
+          type: 'node',
+          bounds
+        });
+      }
     }
     
     return true;
@@ -143,12 +156,18 @@ export class Graph {
     this.adjacencyList.get(sourceId)?.add(edge.id);
     this.adjacencyList.get(targetId)?.add(edge.id);
     
-    // Add to spatial index
-    this.spatialIndex.insert({
-      id: edge.id,
-      type: 'edge',
-      bounds: this.calculateEdgeBounds(edge)
-    });
+    // Analyze bundles whenever edges change
+    this.analyzeBundles();
+    
+    // Add to spatial index with accurate bounds
+    const bounds = this.calculateEdgeBounds(edge);
+    if (bounds && bounds.width > 0 && bounds.height > 0) {
+      this.spatialIndex.insert({
+        id: edge.id,
+        type: 'edge',
+        bounds
+      });
+    }
   }
 
   updateEdge(edgeId: EdgeId, updates: Partial<GraphEdge>): boolean {
@@ -160,11 +179,14 @@ export class Graph {
     
     // Update spatial index - edges move when their connected nodes move
     this.spatialIndex.remove(edgeId);
-    this.spatialIndex.insert({
-      id: edgeId,
-      type: 'edge',
-      bounds: this.calculateEdgeBounds(updatedEdge)
-    });
+    const bounds = this.calculateEdgeBounds(updatedEdge);
+    if (bounds && bounds.width > 0 && bounds.height > 0) {
+      this.spatialIndex.insert({
+        id: edgeId,
+        type: 'edge',
+        bounds
+      });
+    }
     
     return true;
   }
@@ -178,6 +200,9 @@ export class Graph {
 
     this.adjacencyList.get(sourceId)?.delete(edgeId);
     this.adjacencyList.get(targetId)?.delete(edgeId);
+    
+    // Analyze bundles after edge removal
+    this.analyzeBundles();
 
     this.edges.delete(edgeId);
     this.spatialIndex.remove(edgeId);
@@ -429,6 +454,7 @@ export class Graph {
 
   /**
    * Calculate bounding box for an edge
+   * Uses accurate bezier curve bounds when edge is curved
    */
   private calculateEdgeBounds(edge: GraphEdge): BoundingBox {
     const sourceId = this.getSourceId(edge);
@@ -445,9 +471,50 @@ export class Graph {
     const tx = (target as any).x || 0;
     const ty = (target as any).y || 0;
     
-    // Add tolerance for edge hit detection (10px on each side)
-    const tolerance = 10;
+    // Get bundle info to determine curvature
+    const bundleInfo = this.bundler.getBundleInfo(edge.id);
+    const edgeStyle = this.edgeStyles.get(edge.id);
+    const strokeWidth = edgeStyle?.strokeWidth || 2;
     
+    // Check if edge is curved (either from bundle or explicit style)
+    const hasCurvature = (bundleInfo && (bundleInfo.curvature !== 0 || bundleInfo.parallelOffset !== 0)) ||
+                        (edgeStyle?.curvature && edgeStyle.curvature !== 0) ||
+                        (edgeStyle?.parallelOffset && edgeStyle.parallelOffset !== 0);
+    
+    if (hasCurvature) {
+      // Calculate accurate bezier bounds
+      const dx = tx - sx;
+      const dy = ty - sy;
+      const distance = Math.sqrt(dx * dx + dy * dy);
+      
+      if (distance < 1) {
+        return { x: sx - 10, y: sy - 10, width: 20, height: 20 };
+      }
+      
+      const midX = (sx + tx) / 2;
+      const midY = (sy + ty) / 2;
+      
+      // Perpendicular offset
+      const perpX = -dy / distance;
+      const perpY = dx / distance;
+      
+      // Use bundleInfo if available, otherwise fall back to edgeStyle
+      const curvature = bundleInfo?.curvature ?? edgeStyle?.curvature ?? 0;
+      const parallelOffset = bundleInfo?.parallelOffset ?? edgeStyle?.parallelOffset ?? 0;
+      
+      const controlX = midX + (-dy * curvature) + (perpX * parallelOffset);
+      const controlY = midY + (dx * curvature) + (perpY * parallelOffset);
+      
+      return getQuadraticBezierBounds(
+        { x: sx, y: sy },
+        { x: controlX, y: controlY },
+        { x: tx, y: ty },
+        strokeWidth + 10 // Add tolerance for hit detection
+      );
+    }
+    
+    // Straight line fallback
+    const tolerance = 10;
     const minX = Math.min(sx, tx) - tolerance;
     const minY = Math.min(sy, ty) - tolerance;
     const maxX = Math.max(sx, tx) + tolerance;
@@ -466,18 +533,24 @@ export class Graph {
   rebuildSpatialIndex(): void {
     this.spatialIndex.clear();
     this.nodes.forEach(node => {
-      this.spatialIndex.insert({
-        id: node.id,
-        type: 'node',
-        bounds: this.calculateNodeBounds(node)
-      });
+      const bounds = this.calculateNodeBounds(node);
+      if (bounds && bounds.width > 0 && bounds.height > 0) {
+        this.spatialIndex.insert({
+          id: node.id,
+          type: 'node',
+          bounds
+        });
+      }
     });
     this.edges.forEach(edge => {
-      this.spatialIndex.insert({
-        id: edge.id,
-        type: 'edge',
-        bounds: this.calculateEdgeBounds(edge)
-      });
+      const bounds = this.calculateEdgeBounds(edge);
+      if (bounds && bounds.width > 0 && bounds.height > 0) {
+        this.spatialIndex.insert({
+          id: edge.id,
+          type: 'edge',
+          bounds
+        });
+      }
     });
   }
 
@@ -485,5 +558,68 @@ export class Graph {
    */
   getSpatialIndexDebugInfo(): any {
     return this.spatialIndex.getDebugInfo();
+  }
+
+  // ============================================================================
+  // Multi-Edge Bundling
+  // ============================================================================
+
+  /**
+   * Analyze and compute bundle information for all edges
+   */
+  analyzeBundles(): void {
+    this.bundler.analyzeBundles(Array.from(this.edges.values()), true);
+  }
+
+  /**
+   * Get bundle information for an edge
+   */
+  getEdgeBundleInfo(edgeId: EdgeId): EdgeBundleInfo | undefined {
+    return this.bundler.getBundleInfo(edgeId);
+  }
+
+  /**
+   * Get all edges in the same bundle as the given edge
+   */
+  getBundleEdges(edgeId: EdgeId): EdgeId[] {
+    return this.bundler.getBundleEdges(edgeId);
+  }
+
+  /**
+   * Check if edge is part of a multi-edge bundle
+   */
+  isMultiEdge(edgeId: EdgeId): boolean {
+    return this.bundler.isMultiEdge(edgeId);
+  }
+
+  /**
+   * Get bundling statistics
+   */
+  getBundleStatistics() {
+    return this.bundler.getStatistics();
+  }
+
+  /**
+   * Update bundle configuration
+   */
+  updateBundleConfig(config: Partial<BundleConfig>): void {
+    this.bundler.updateConfig(config);
+    this.analyzeBundles();
+    // Rebuild spatial index with new bundle info
+    this.rebuildSpatialIndex();
+  }
+
+  /**
+   * Set edge style (used by renderer to cache styles for bounds calculation)
+   */
+  setEdgeStyle(edgeId: EdgeId, style: EdgeStyle): void {
+    this.edgeStyles.set(edgeId, style);
+  }
+
+  /**
+   * Get cached edge style
+   */
+  getEdgeStyle(edgeId: EdgeId): EdgeStyle | undefined {
+    return this.edgeStyles.get(edgeId);
   }
 }

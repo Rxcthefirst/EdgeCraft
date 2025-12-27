@@ -119,11 +119,68 @@ export interface NodeStyle {
   };
 }
 
+// ============================================================================
+// Edge Arrow Configuration
+// ============================================================================
+
+export interface ArrowConfig {
+  position: 'none' | 'forward' | 'backward' | 'both';
+  size?: number;
+  shape?: 'triangle' | 'chevron' | 'diamond' | 'circle';
+  filled?: boolean;
+  offset?: number; // Distance from node edge
+}
+
+export interface SelfLoopConfig {
+  radius?: number;
+  angle?: number; // 0-360 degrees
+  clockwise?: boolean;
+}
+
+export interface EdgeGlyphConfig {
+  position: number; // 0.0 to 1.0 along edge
+  text?: string;
+  icon?: string;
+  shape?: 'circle' | 'square' | 'diamond';
+  size?: number;
+  fill?: string;
+  stroke?: string;
+  interactive?: boolean;
+  tooltip?: string;
+  direction?: 'forward' | 'backward';
+}
+
 export interface EdgeStyle {
   stroke?: string;
   strokeWidth?: number;
   strokeDasharray?: string;
-  arrow?: 'none' | 'forward' | 'backward' | 'both';
+  
+  // Enhanced arrow configuration
+  arrow?: ArrowConfig | 'none' | 'forward' | 'backward' | 'both';
+  
+  // Self-loop configuration
+  selfLoop?: SelfLoopConfig;
+  
+  // Multi-edge support
+  curvature?: number;         // Curvature amount (0 = straight, 0.2 = default curve)
+  parallelOffset?: number;    // Perpendicular offset for multi-edges
+  
+  // Edge glyphs (for RDF inverse relationships, etc.)
+  glyphs?: EdgeGlyphConfig[];
+  
+  // Inverse relationship predicates (RDF)
+  forwardPredicate?: string;   // Predicate from source perspective
+  inversePredicate?: string;   // Predicate from target perspective
+  
+  // Relationship mode
+  relationshipMode?: 'symmetric' | 'inverse' | 'asymmetric';
+  // symmetric: same predicate both ways (friend/friend) - arrows both, no glyphs
+  // inverse: different predicates (employs/employedBy) - glyphs at ends
+  // asymmetric: single direction only - arrow forward, no glyphs
+  
+  // Bidirectional mode
+  bidirectional?: 'single' | 'parallel';
+  
   label?: {
     text?: string;
     fontSize?: number;
@@ -132,7 +189,12 @@ export interface EdgeStyle {
     backgroundColor?: string;
     rotateWithEdge?: boolean; // Rotate label to align with edge direction
   };
-  curvature?: number;
+}
+
+// RDF-specific edge extension
+export interface RDFInverseEdge extends RDFTriple {
+  inversePredicate?: string;
+  inversePropertyURI?: string;
 }
 
 export type StyleFunction<T> = (element: T) => Partial<NodeStyle> | Partial<EdgeStyle>;

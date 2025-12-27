@@ -509,6 +509,7 @@ export class InteractionManager {
     direction: 'forward' | 'backward'; 
     predicate: string;
     position: number;
+    propertyNodeId?: string | number;
   } | null {
     const glyphThreshold = 12 / this.currentTransform.scale; // Slightly larger than glyph radius
     
@@ -608,7 +609,8 @@ export class InteractionManager {
             edgeId: edge.id,
             direction: glyph.direction || 'forward',
             predicate: glyph.text || glyph.icon || '',
-            position: t
+            position: t,
+            propertyNodeId: glyph.propertyNodeId
           };
         }
       }

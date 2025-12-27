@@ -404,9 +404,12 @@ const advancedEdgesData = {
     { id: 9, labels: ['Wheel'], properties: { name: 'Front Left' } }
   ],
   edges: [
-    // Self-loops (reflexive relationships)
+    // Multiple self-loops on same node (demonstrates bundling)
     { id: 'self1', source: 1, target: 1, label: 'wait', properties: {} },
+    { id: 'self1b', source: 1, target: 1, label: 'idle', properties: {} },
+    { id: 'self1c', source: 1, target: 1, label: 'ready', properties: {} },
     { id: 'self2', source: 3, target: 3, label: 'retry', properties: {} },
+    { id: 'self2b', source: 3, target: 3, label: 'log', properties: {} },
     
     // Directed edges (state machine)
     { id: 'e1', source: 1, target: 2, label: 'start', properties: {} },

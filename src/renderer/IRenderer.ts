@@ -1,4 +1,5 @@
 import { GraphNode, GraphEdge, NodeStyle, EdgeStyle } from '../types';
+import type { Graph } from '../core/Graph';
 
 /**
  * Renderer abstraction interface
@@ -9,6 +10,11 @@ export interface IRenderer {
    * Initialize the renderer
    */
   initialize(): void;
+
+  /**
+   * Set graph reference for accessing bundle info and property nodes
+   */
+  setGraph(graph: Graph): void;
 
   /**
    * Render all nodes and edges

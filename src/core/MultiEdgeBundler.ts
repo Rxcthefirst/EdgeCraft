@@ -19,6 +19,8 @@ export interface EdgeBundleInfo {
   parallelOffset: number;   // Perpendicular offset from center line
   bundleIndex: number;      // Position in bundle (0 to N-1)
   bundleSize: number;       // Total edges in this bundle
+  selfLoopAngle?: number;   // Angle for self-loops (degrees)
+  selfLoopRadius?: number;  // Radius for self-loops (pixels)
 }
 
 export interface BundleConfig {
@@ -72,13 +74,20 @@ export class MultiEdgeBundler {
     this.edgeBundles.clear();
     this.bundleInfo.clear();
 
+    // Separate self-loops for special handling
+    const selfLoops = new Map<NodeId, EdgeId[]>();
+
     // Group edges by node pair
     edges.forEach(edge => {
       const sourceId = 'source' in edge ? edge.source : (edge as any).subject;
       const targetId = 'target' in edge ? edge.target : (edge as any).object;
       
-      // Skip self-loops
+      // Handle self-loops separately
       if (sourceId === targetId) {
+        if (!selfLoops.has(sourceId)) {
+          selfLoops.set(sourceId, []);
+        }
+        selfLoops.get(sourceId)!.push(edge.id);
         return;
       }
 
@@ -89,6 +98,11 @@ export class MultiEdgeBundler {
       }
       
       this.edgeBundles.get(key)!.push(edge.id);
+    });
+
+    // Process self-loops with angle distribution
+    selfLoops.forEach((edgeIds, nodeId) => {
+      this.calculateSelfLoopDistribution(edgeIds, nodeId);
     });
 
     // For directed graphs, check for bidirectional edges and ensure they both get curves
@@ -122,6 +136,47 @@ export class MultiEdgeBundler {
       // Check if we need to adjust for bidirectional edges
       const adjustedBundleSize = this.bidirectionalBundleSizes.get(key);
       this.calculateBundleDistribution(edgeIds, adjustedBundleSize);
+    });
+  }
+
+  /**
+   * Calculate angle distribution for multiple self-loops on same node
+   * Distributes loops evenly around the node to prevent overlap
+   */
+  private calculateSelfLoopDistribution(edgeIds: EdgeId[], nodeId: NodeId): void {
+    const count = edgeIds.length;
+    
+    if (count === 1) {
+      // Single self-loop at 45 degrees (top-right)
+      this.bundleInfo.set(edgeIds[0], {
+        edgeId: edgeIds[0],
+        curvature: 0,
+        parallelOffset: 0,
+        bundleIndex: 0,
+        bundleSize: 1,
+        selfLoopAngle: 45,
+        selfLoopRadius: 80 // Much larger for visibility
+      } as any);
+      return;
+    }
+
+    // Multiple self-loops: distribute evenly around the node
+    // Start at 0° (right) and go clockwise
+    const angleStep = 360 / count;
+    
+    edgeIds.forEach((edgeId, index) => {
+      const angle = index * angleStep;
+      const radiusVariation = Math.floor(index / 4) * 20; // Vary radius for very dense loops
+      
+      this.bundleInfo.set(edgeId, {
+        edgeId,
+        curvature: 0,
+        parallelOffset: 0,
+        bundleIndex: index,
+        bundleSize: count,
+        selfLoopAngle: angle,
+        selfLoopRadius: 80 + radiusVariation // Much larger and varied
+      } as any);
     });
   }
 

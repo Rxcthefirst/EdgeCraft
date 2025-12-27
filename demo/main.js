@@ -637,14 +637,16 @@ function setupGraphEvents() {
     const glyphHit = event.target.__glyphHit;
     
     if (glyphHit) {
-      console.log('=== Glyph Clicked ===');
+      console.log('=== Property Node Clicked ===');
+      console.log('Property Object ID:', glyphHit.propertyNodeId);
       console.log('Direction:', glyphHit.direction);
-      console.log('Predicate:', glyphHit.predicate);
-      console.log('Position:', glyphHit.position);
-      console.log('Edge ID:', event.target.id);
+      console.log('Predicate URI:', glyphHit.predicate);
+      console.log('Position on Edge:', glyphHit.position);
+      console.log('Parent Edge ID:', event.target.id);
+      console.log('Type: RDF Property (First-class Object)');
       
-      // Show glyph-specific details
-      showEdgeDetails(event.target, glyphHit);
+      // Show property-specific details
+      showPropertyDetails(event.target, glyphHit);
     } else {
       console.log('=== Edge Body Clicked ===');
       console.log('Edge ID:', event.target.id);
@@ -782,6 +784,50 @@ function showEdgeDetails(edge, glyphHit) {
       }
     });
   }
+  
+  content.innerHTML = html;
+  panel.classList.remove('hidden');
+  
+  document.getElementById('close-details').onclick = hideNodeDetails;
+}
+
+// Show property node details (RDF property as object)
+function showPropertyDetails(edge, glyphHit) {
+  const panel = document.getElementById('node-details');
+  const content = document.getElementById('details-content');
+  
+  let html = '<h4>📦 Property Object</h4>';
+  html += `<p style="background: #e8f5e9; padding: 8px; border-radius: 4px; font-size: 11px;">This is an <strong>RDF Property</strong> represented as a first-class object</p>`;
+  
+  html += `<p><strong>Property ID:</strong> <code>${glyphHit.propertyNodeId || 'N/A'}</code></p>`;
+  html += `<p><strong>Property URI:</strong> <code>${glyphHit.predicate}</code></p>`;
+  html += `<p><strong>Direction:</strong> ${glyphHit.direction === 'forward' ? '→ Forward' : '← Backward'}</p>`;
+  html += `<p><strong>Position:</strong> ${(glyphHit.position * 100).toFixed(1)}% along edge</p>`;
+  
+  html += `<hr style="margin: 12px 0;">`;
+  html += `<h5>Parent Relationship</h5>`;
+  html += `<p><strong>Edge ID:</strong> ${edge.id}</p>`;
+  
+  const sourceId = edge.source || edge.subject;
+  const targetId = edge.target || edge.object;
+  
+  if (glyphHit.direction === 'forward') {
+    html += `<p><strong>From:</strong> ${sourceId}</p>`;
+    html += `<p><strong>To:</strong> ${targetId}</p>`;
+  } else {
+    html += `<p><strong>From:</strong> ${targetId}</p>`;
+    html += `<p><strong>To:</strong> ${sourceId}</p>`;
+  }
+  
+  if (edge.forwardPredicate && edge.inversePredicate) {
+    html += `<hr style="margin: 12px 0;">`;
+    html += `<h5>Inverse Pair</h5>`;
+    html += `<p><strong>Forward:</strong> ${edge.forwardPredicate}</p>`;
+    html += `<p><strong>Inverse:</strong> ${edge.inversePredicate}</p>`;
+  }
+  
+  html += `<hr style="margin: 12px 0;">`;
+  html += `<p style="font-size: 10px; color: #666;">💡 This property can be queried independently in SPARQL</p>`;
   
   content.innerHTML = html;
   panel.classList.remove('hidden');

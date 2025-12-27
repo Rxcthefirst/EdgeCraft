@@ -28,6 +28,9 @@ export interface LPGNode {
   labels: string[];
   properties: Record<string, any>;
   position?: Position;
+  parent?: NodeId; // Parent group/combo node
+  isGroup?: boolean; // Is this a group/combo node
+  collapsed?: boolean; // Is the group collapsed
 }
 
 export interface LPGEdge {
@@ -52,6 +55,9 @@ export interface RDFNode {
   datatype?: string;
   language?: string;
   position?: Position;
+  parent?: NodeId; // Parent group/combo node
+  isGroup?: boolean; // Is this a group/combo node
+  collapsed?: boolean; // Is the group collapsed
 }
 
 export interface RDFTriple {
@@ -84,6 +90,7 @@ export interface GraphData {
   nodes: GraphNode[];
   edges: GraphEdge[];
   associationClasses?: AssociationClass[];
+  propertyNodes?: PropertyNode[];  // RDF properties as visual objects
 }
 
 // ============================================================================
@@ -148,6 +155,7 @@ export interface EdgeGlyphConfig {
   interactive?: boolean;
   tooltip?: string;
   direction?: 'forward' | 'backward';
+  propertyNodeId?: NodeId;  // Link to PropertyNode if this glyph represents a property object
 }
 
 export interface EdgeStyle {
@@ -195,6 +203,27 @@ export interface EdgeStyle {
 export interface RDFInverseEdge extends RDFTriple {
   inversePredicate?: string;
   inversePropertyURI?: string;
+}
+
+// ============================================================================
+// Property Nodes (RDF Properties as Objects)
+// ============================================================================
+
+/**
+ * PropertyNode represents an RDF property as a visual object on an edge
+ * This enables properties themselves to be selectable, queryable entities
+ * Used for displaying inverse relationships with separate glyphs
+ */
+export interface PropertyNode {
+  id: NodeId;
+  type: 'property';
+  propertyURI: string;           // The RDF property URI (e.g., 'employs', 'employedBy')
+  edgeId: EdgeId;                // The edge this property belongs to
+  direction: 'forward' | 'backward';  // Which end of the edge
+  position: number;              // 0.0-1.0 position along edge
+  label?: string;                // Display label
+  selected?: boolean;
+  metadata?: Record<string, any>; // Additional property metadata
 }
 
 export type StyleFunction<T> = (element: T) => Partial<NodeStyle> | Partial<EdgeStyle>;

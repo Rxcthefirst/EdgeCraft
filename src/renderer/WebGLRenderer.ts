@@ -1,5 +1,6 @@
-import { GraphNode, GraphEdge, NodeStyle, EdgeStyle } from '../types';
+import { GraphNode, GraphEdge, NodeStyle, EdgeStyle, PropertyNode } from '../types';
 import { IRenderer, RendererMetrics } from './IRenderer';
+import type { Graph } from '../core/Graph';
 
 interface NodeVertex {
   x: number;
@@ -15,6 +16,19 @@ interface EdgeVertex {
   y2: number;
   color: [number, number, number, number]; // RGBA
   width: number;
+  curvature?: number;
+  parallelOffset?: number;
+  isSelfLoop?: boolean;
+  selfLoopAngle?: number;
+  selfLoopRadius?: number;
+}
+
+interface GlyphVertex {
+  x: number;
+  y: number;
+  size: number;
+  text: string;
+  color: [number, number, number, number];
 }
 
 /**
@@ -30,8 +44,13 @@ export class WebGLRenderer implements IRenderer {
   private labelCtx: CanvasRenderingContext2D;
   private nodes: Map<string | number, NodeVertex>;
   private edges: Map<string | number, EdgeVertex>;
+  private glyphs: Map<string | number, GlyphVertex[]>; // Edge ID -> glyphs on that edge
+  private propertyNodes: Map<string | number, PropertyNode>;
+  private associationClasses: Map<string | number, {ac: any, nodeVertex: NodeVertex}>;
   private nodeStyles: Map<string | number, NodeStyle>;
   private edgeStyles: Map<string | number, EdgeStyle>;
+  private graph: Graph | null;
+  private enableViewportCulling: boolean;
   private width: number;
   private height: number;
   private pixelRatio: number;
@@ -49,6 +68,14 @@ export class WebGLRenderer implements IRenderer {
   private frameCount: number;
   private lastFpsUpdate: number;
 
+  // LOD (Level of Detail) thresholds
+  private lodThresholds = {
+    hideLabels: 0.3,        // Below this zoom, hide labels
+    hideGlyphs: 0.2,        // Below this zoom, hide glyphs
+    collapseBundles: 0.15,  // Below this zoom, collapse multi-edges to single line
+    simplifyNodes: 0.1      // Below this zoom, draw all nodes as simple circles
+  };
+
   constructor(container: string | HTMLElement, options: {
     width?: number;
     height?: number;
@@ -65,8 +92,13 @@ export class WebGLRenderer implements IRenderer {
 
     this.nodes = new Map();
     this.edges = new Map();
+    this.glyphs = new Map();
+    this.propertyNodes = new Map();
+    this.associationClasses = new Map();
     this.nodeStyles = new Map();
     this.edgeStyles = new Map();
+    this.graph = null;
+    this.enableViewportCulling = true; // Default ON for WebGL
     this.transform = { x: 0, y: 0, scale: 1 };
     this.pixelRatio = options.pixelRatio || window.devicePixelRatio || 1;
     this.needsRebuild = true;
@@ -149,6 +181,30 @@ export class WebGLRenderer implements IRenderer {
     this.gl.enable(this.gl.BLEND);
     this.gl.blendFunc(this.gl.SRC_ALPHA, this.gl.ONE_MINUS_SRC_ALPHA);
     console.log('WebGLRenderer initialized');
+  }
+
+  setGraph(graph: Graph): void {
+    this.graph = graph;
+  }
+
+  /**
+   * Calculate viewport bounds in world space
+   */
+  private getViewportBounds(): { x: number; y: number; width: number; height: number } {
+    const { x, y, scale } = this.transform;
+    const worldX = -x / scale;
+    const worldY = -y / scale;
+    const worldWidth = this.width / scale;
+    const worldHeight = this.height / scale;
+    
+    // 20% margin
+    const margin = 0.2;
+    return {
+      x: worldX - worldWidth * margin,
+      y: worldY - worldHeight * margin,
+      width: worldWidth * (1 + margin * 2),
+      height: worldHeight * (1 + margin * 2)
+    };
   }
 
   private initShaders(): void {
@@ -306,17 +362,51 @@ export class WebGLRenderer implements IRenderer {
     gl.uniform2f(resolutionLoc, this.width, this.height);
     gl.uniform3f(transformLoc, this.transform.x, this.transform.y, this.transform.scale);
     
-    // Build vertex data
+    // LOD: Collapse bundles to straight lines at far zoom
+    const collapseBundles = this.transform.scale < this.lodThresholds.collapseBundles;
+    
+    // Viewport culling for large graphs
+    let edgesToRender: Map<string | number, EdgeVertex>;
+    
+    if (this.enableViewportCulling && this.graph && this.edges.size > 500) {
+      const viewportBounds = this.getViewportBounds();
+      const visibleEdges = this.graph.getEdgesInBounds(viewportBounds);
+      
+      edgesToRender = new Map();
+      visibleEdges.forEach(edge => {
+        const vertex = this.edges.get(edge.id);
+        if (vertex) {
+          edgesToRender.set(edge.id, vertex);
+        }
+      });
+    } else {
+      edgesToRender = this.edges;
+    }
+    
+    // Build vertex data - use line segments for curved edges
     const vertices: number[] = [];
-    this.edges.forEach((edge) => {
-      // Each edge = 2 vertices (line)
-      // Vertex format: x, y, r, g, b, a
+    
+    edgesToRender.forEach((edge) => {
       const [r, g, b, a] = edge.color;
       
-      // Start point
-      vertices.push(edge.x1, edge.y1, r, g, b, a);
-      // End point
-      vertices.push(edge.x2, edge.y2, r, g, b, a);
+      // At very far zoom, always draw straight lines (massive performance boost)
+      if (collapseBundles || edge.isSelfLoop && this.transform.scale < 0.2) {
+        // Skip self-loops at very far zoom (they're tiny anyway)
+        if (!edge.isSelfLoop) {
+          vertices.push(edge.x1, edge.y1, r, g, b, a);
+          vertices.push(edge.x2, edge.y2, r, g, b, a);
+        }
+      } else if (edge.isSelfLoop) {
+        // Draw self-loop as segmented curve
+        this.addSelfLoopVertices(vertices, edge, r, g, b, a);
+      } else if (edge.curvature !== 0 || edge.parallelOffset !== 0) {
+        // Draw curved edge as segmented line
+        this.addCurvedEdgeVertices(vertices, edge, r, g, b, a);
+      } else {
+        // Straight line (2 vertices)
+        vertices.push(edge.x1, edge.y1, r, g, b, a);
+        vertices.push(edge.x2, edge.y2, r, g, b, a);
+      }
     });
     
     const vertexData = new Float32Array(vertices);
@@ -342,6 +432,105 @@ export class WebGLRenderer implements IRenderer {
     gl.drawArrays(gl.LINES, 0, vertices.length / 6);
   }
 
+  private addCurvedEdgeVertices(
+    vertices: number[],
+    edge: EdgeVertex,
+    r: number,
+    g: number,
+    b: number,
+    a: number
+  ): void {
+    // Quadratic bezier curve approximation with line segments
+    const segments = 16; // Number of line segments
+    const { x1, y1, x2, y2, curvature, parallelOffset } = edge;
+    
+    const dx = x2 - x1;
+    const dy = y2 - y1;
+    const distance = Math.sqrt(dx * dx + dy * dy);
+    const midX = (x1 + x2) / 2;
+    const midY = (y1 + y2) / 2;
+    
+    // Perpendicular offset for multi-edges
+    const perpX = distance > 0 ? -dy / distance : 0;
+    const perpY = distance > 0 ? dx / distance : 0;
+    
+    // Control point for quadratic bezier
+    const controlX = midX + (-dy * (curvature || 0)) + (perpX * (parallelOffset || 0));
+    const controlY = midY + (dx * (curvature || 0)) + (perpY * (parallelOffset || 0));
+    
+    // Generate line segments
+    for (let i = 0; i < segments; i++) {
+      const t1 = i / segments;
+      const t2 = (i + 1) / segments;
+      
+      const p1 = this.getQuadraticBezierPoint(x1, y1, controlX, controlY, x2, y2, t1);
+      const p2 = this.getQuadraticBezierPoint(x1, y1, controlX, controlY, x2, y2, t2);
+      
+      vertices.push(p1.x, p1.y, r, g, b, a);
+      vertices.push(p2.x, p2.y, r, g, b, a);
+    }
+  }
+
+  private addSelfLoopVertices(
+    vertices: number[],
+    edge: EdgeVertex,
+    r: number,
+    g: number,
+    b: number,
+    a: number
+  ): void {
+    // Draw self-loop as segmented curve
+    const segments = 20;
+    const { x1, y1, selfLoopAngle = 45, selfLoopRadius = 100 } = edge;
+    
+    const angle = (selfLoopAngle * Math.PI) / 180;
+    const nodeRadius = 30; // Should match node size
+    
+    // Attachment spread
+    const attachmentSpread = Math.PI / 6;
+    const startAngle = angle - attachmentSpread;
+    const endAngle = angle + attachmentSpread;
+    
+    // Start and end points on node perimeter (assume circle for now)
+    const startX = x1 + nodeRadius * Math.cos(startAngle);
+    const startY = y1 + nodeRadius * Math.sin(startAngle);
+    const endX = x1 + nodeRadius * Math.cos(endAngle);
+    const endY = y1 + nodeRadius * Math.sin(endAngle);
+    
+    // Control point for loop
+    const controlDistance = nodeRadius + selfLoopRadius * 2;
+    const controlX = x1 + controlDistance * Math.cos(angle);
+    const controlY = y1 + controlDistance * Math.sin(angle);
+    
+    // Generate line segments
+    for (let i = 0; i < segments; i++) {
+      const t1 = i / segments;
+      const t2 = (i + 1) / segments;
+      
+      const p1 = this.getQuadraticBezierPoint(startX, startY, controlX, controlY, endX, endY, t1);
+      const p2 = this.getQuadraticBezierPoint(startX, startY, controlX, controlY, endX, endY, t2);
+      
+      vertices.push(p1.x, p1.y, r, g, b, a);
+      vertices.push(p2.x, p2.y, r, g, b, a);
+    }
+  }
+
+  private getQuadraticBezierPoint(
+    x0: number, y0: number,
+    x1: number, y1: number,
+    x2: number, y2: number,
+    t: number
+  ): { x: number; y: number } {
+    const u = 1 - t;
+    const tt = t * t;
+    const uu = u * u;
+    
+    return {
+      x: uu * x0 + 2 * u * t * x1 + tt * x2,
+      y: uu * y0 + 2 * u * t * y1 + tt * y2
+    };
+  }
+
   private drawNodes(): void {
     if (this.nodes.size === 0 || !this.nodeProgram) return;
     
@@ -357,12 +546,40 @@ export class WebGLRenderer implements IRenderer {
     gl.uniform2f(resolutionLoc, this.width, this.height);
     gl.uniform3f(transformLoc, this.transform.x, this.transform.y, this.transform.scale);
     
+    // LOD: Simplify nodes to basic circles at far zoom
+    const simplifyNodes = this.transform.scale < this.lodThresholds.simplifyNodes;
+    
+    // Viewport culling for large graphs
+    let nodesToRender: Map<string | number, NodeVertex>;
+    
+    if (this.enableViewportCulling && this.graph && this.nodes.size > 500) {
+      const viewportBounds = this.getViewportBounds();
+      const visibleNodes = this.graph.getNodesInBounds(viewportBounds);
+      
+      nodesToRender = new Map();
+      visibleNodes.forEach(node => {
+        const vertex = this.nodes.get(node.id);
+        if (vertex) {
+          nodesToRender.set(node.id, vertex);
+        }
+      });
+    } else {
+      nodesToRender = this.nodes;
+    }
+    
     // Build vertex data
     const vertices: number[] = [];
-    this.nodes.forEach((node) => {
+    nodesToRender.forEach((node) => {
       // Vertex format: x, y, size, r, g, b, a
       const [r, g, b, a] = node.color;
-      vertices.push(node.x, node.y, node.size, r, g, b, a);
+      
+      // At very far zoom, reduce node size to save rendering time
+      let size = node.size;
+      if (simplifyNodes) {
+        size = Math.max(3, size * 0.5); // Minimum 3px diameter
+      }
+      
+      vertices.push(node.x, node.y, size, r, g, b, a);
     });
     
     const vertexData = new Float32Array(vertices);
@@ -432,15 +649,51 @@ export class WebGLRenderer implements IRenderer {
     
     if (!sourceNode || !targetNode) return;
     
+    // Get bundle info for curvature and self-loop positioning
+    const bundleInfo = this.graph?.getEdgeBundleInfo(edge.id);
+    const curvature = bundleInfo?.curvature ?? (style.curvature !== undefined ? style.curvature : 0.2);
+    const parallelOffset = bundleInfo?.parallelOffset ?? (style.parallelOffset || 0);
+    
     const color = this.parseColor(style.stroke || '#999999');
+    const isSelfLoop = sourceId === targetId;
+    
     this.edges.set(edge.id, {
       x1: sourceNode.x,
       y1: sourceNode.y,
       x2: targetNode.x,
       y2: targetNode.y,
       color,
-      width: style.strokeWidth || 1
+      width: style.strokeWidth || 1,
+      curvature,
+      parallelOffset,
+      isSelfLoop,
+      selfLoopAngle: bundleInfo?.selfLoopAngle,
+      selfLoopRadius: bundleInfo?.selfLoopRadius
     });
+    
+    // Handle glyphs (property objects)
+    if (style.glyphs && style.glyphs.length > 0) {
+      const glyphVertices: GlyphVertex[] = [];
+      
+      for (const glyphConfig of style.glyphs) {
+        const position = glyphConfig.position || 0.5;
+        
+        // Calculate glyph position along edge (will need bezier calculation)
+        const glyphX = sourceNode.x + (targetNode.x - sourceNode.x) * position;
+        const glyphY = sourceNode.y + (targetNode.y - sourceNode.y) * position;
+        
+        glyphVertices.push({
+          x: glyphX,
+          y: glyphY,
+          size: glyphConfig.size || 20,
+          text: glyphConfig.text || '',
+          color: this.parseColor(glyphConfig.fill || '#4CAF50')
+        });
+      }
+      
+      this.glyphs.set(edge.id, glyphVertices);
+    }
+    
     this.edgeStyles.set(edge.id, style);
     this.needsRebuild = true;
     this.metrics.edgeCount = this.edges.size;
@@ -489,9 +742,68 @@ export class WebGLRenderer implements IRenderer {
     this.metrics.edgeCount = this.edges.size;
   }
 
+  addAssociationClass(ac: any, style: NodeStyle): void {
+    // Calculate position from sourceEdges
+    let x = 0, y = 0;
+    
+    if (ac.position) {
+      x = ac.position.x || 0;
+      y = ac.position.y || 0;
+    } else if (ac.sourceEdges && ac.sourceEdges.length > 0) {
+      // Calculate midpoint from first edge
+      const edge = this.edges.get(ac.sourceEdges[0]);
+      if (edge) {
+        x = (edge.x1 + edge.x2) / 2;
+        y = (edge.y1 + edge.y2) / 2;
+      }
+    }
+    
+    const color = this.parseColor(style.fill || '#9C27B0');
+    this.associationClasses.set(ac.id, {
+      ac,
+      nodeVertex: {
+        x,
+        y,
+        size: (style.radius || 30) * 2,
+        color
+      }
+    });
+    
+    this.nodeStyles.set(ac.id, style);
+    this.needsRebuild = true;
+  }
+
+  updateAssociationClass(id: string | number, updates: any, style?: NodeStyle): void {
+    const existing = this.associationClasses.get(id);
+    if (!existing) return;
+    
+    const updatedAc = { ...existing.ac, ...updates };
+    
+    if (style) {
+      existing.nodeVertex.size = (style.radius || 30) * 2;
+      existing.nodeVertex.color = this.parseColor(style.fill || '#9C27B0');
+      this.nodeStyles.set(id, style);
+    }
+    
+    this.associationClasses.set(id, {
+      ac: updatedAc,
+      nodeVertex: existing.nodeVertex
+    });
+    
+    this.needsRebuild = true;
+  }
+
+  removeAssociationClass(id: string | number): void {
+    this.associationClasses.delete(id);
+    this.nodeStyles.delete(id);
+    this.needsRebuild = true;
+  }
+
   clear(): void {
     this.nodes.clear();
     this.edges.clear();
+    this.associationClasses.clear();
+    this.glyphs.clear();
     this.needsRebuild = true;
     this.metrics.nodeCount = 0;
     this.metrics.edgeCount = 0;
@@ -547,6 +859,8 @@ export class WebGLRenderer implements IRenderer {
     
     this.nodes.clear();
     this.edges.clear();
+    this.associationClasses.clear();
+    this.glyphs.clear();
   }
 
   private parseColor(color: string): [number, number, number, number] {
@@ -581,7 +895,11 @@ export class WebGLRenderer implements IRenderer {
     // Clear label canvas
     ctx.clearRect(0, 0, this.width, this.height);
     
-    // Draw node icons inside shapes
+    // LOD: Skip expensive label rendering at far zoom
+    const skipLabels = scale < this.lodThresholds.hideLabels;
+    const skipGlyphs = scale < this.lodThresholds.hideGlyphs;
+    
+    // Always draw node icons (they're inside the shape, important for recognition)
     for (const [nodeId, nodeVertex] of this.nodes.entries()) {
       const style = this.nodeStyles.get(nodeId);
       if (!style || !style.icon) continue;
@@ -589,6 +907,9 @@ export class WebGLRenderer implements IRenderer {
       const screenX = nodeVertex.x * scale + tx;
       const screenY = nodeVertex.y * scale + ty;
       const iconSize = (style.radius || 30) * 0.8 * scale;
+      
+      // Skip very small icons (would be unreadable anyway)
+      if (iconSize < 6) continue;
       
       ctx.save();
       ctx.font = `${iconSize}px Arial`;
@@ -598,6 +919,9 @@ export class WebGLRenderer implements IRenderer {
       ctx.fillText(style.icon, screenX, screenY);
       ctx.restore();
     }
+    
+    // Skip labels at far zoom
+    if (skipLabels) return;
     
     // Draw node labels
     for (const [nodeId, nodeVertex] of this.nodes.entries()) {
@@ -646,6 +970,77 @@ export class WebGLRenderer implements IRenderer {
         const lineY = screenY + offsetY + (index - (lines.length - 1) / 2) * lineHeight;
         ctx.fillText(line, screenX, lineY);
       });
+      
+      ctx.restore();
+    }
+    
+    // Draw association classes (hexagons on canvas overlay since WebGL doesn't do hexagons easily)
+    for (const [acId, data] of this.associationClasses.entries()) {
+      const { ac, nodeVertex } = data;
+      const style = this.nodeStyles.get(acId);
+      if (!style) continue;
+      
+      // Recalculate position if needed (from edge midpoint)
+      let x = nodeVertex.x;
+      let y = nodeVertex.y;
+      
+      if (ac.sourceEdges && ac.sourceEdges.length > 0) {
+        const edge = this.edges.get(ac.sourceEdges[0]);
+        if (edge) {
+          x = (edge.x1 + edge.x2) / 2;
+          y = (edge.y1 + edge.y2) / 2;
+          nodeVertex.x = x;
+          nodeVertex.y = y;
+        }
+      }
+      
+      const screenX = x * scale + tx;
+      const screenY = y * scale + ty;
+      const size = (style.radius || 30) * scale;
+      
+      // Skip if too small
+      if (size < 3) continue;
+      
+      ctx.save();
+      
+      // Draw hexagon
+      ctx.fillStyle = `rgba(${nodeVertex.color[0] * 255}, ${nodeVertex.color[1] * 255}, ${nodeVertex.color[2] * 255}, ${nodeVertex.color[3]})`;
+      ctx.strokeStyle = style.stroke || '#7B1FA2';
+      ctx.lineWidth = (style.strokeWidth || 2) * Math.min(scale, 1);
+      
+      ctx.beginPath();
+      for (let i = 0; i < 6; i++) {
+        const angle = (Math.PI / 3) * i - Math.PI / 2; // Start from top
+        const px = screenX + size * Math.cos(angle);
+        const py = screenY + size * Math.sin(angle);
+        
+        if (i === 0) {
+          ctx.moveTo(px, py);
+        } else {
+          ctx.lineTo(px, py);
+        }
+      }
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+      
+      // Draw icon if provided
+      if (style.icon) {
+        ctx.fillStyle = '#ffffff';
+        ctx.font = `${size * 0.8}px Arial`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(style.icon, screenX, screenY);
+      }
+      
+      // Draw name/label below
+      if (ac.name && !skipLabels) {
+        ctx.font = `${style.label?.fontSize || 10}px ${style.label?.fontFamily || 'Arial'}`;
+        ctx.fillStyle = style.label?.color || '#333';
+        ctx.textAlign = 'center';
+        const offsetY = size + 12;
+        ctx.fillText(ac.name, screenX, screenY + offsetY);
+      }
       
       ctx.restore();
     }
@@ -703,6 +1098,40 @@ export class WebGLRenderer implements IRenderer {
       ctx.fillText(labelText, drawX, drawY);
       
       ctx.restore();
+    }
+    
+    // LOD: Skip glyphs at very far zoom (they'd be too small to see)
+    if (skipGlyphs) return;
+    
+    // Draw glyphs (property object indicators)
+    for (const [edgeId, glyphList] of this.glyphs.entries()) {
+      const edge = this.edges.get(edgeId);
+      if (!edge) continue;
+      
+      for (const glyph of glyphList) {
+        const screenX = glyph.x * scale + tx;
+        const screenY = glyph.y * scale + ty;
+        const size = glyph.size * scale;
+        
+        ctx.save();
+        
+        // Draw glyph background (circle or hexagon)
+        ctx.fillStyle = `rgba(${glyph.color[0] * 255}, ${glyph.color[1] * 255}, ${glyph.color[2] * 255}, ${glyph.color[3]})`;
+        ctx.beginPath();
+        ctx.arc(screenX, screenY, size / 2, 0, Math.PI * 2);
+        ctx.fill();
+        
+        // Draw glyph text
+        if (glyph.text) {
+          ctx.font = `${size * 0.6}px Arial`;
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillStyle = '#ffffff';
+          ctx.fillText(glyph.text, screenX, screenY);
+        }
+        
+        ctx.restore();
+      }
     }
   }
 }

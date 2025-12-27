@@ -33,6 +33,7 @@ export class CanvasRenderer implements IRenderer {
   private contexts: Map<LayerType, CanvasRenderingContext2D>;
   private nodes: Map<string | number, CachedNode>;
   private edges: Map<string | number, CachedEdge>;
+  private associationClasses: Map<string | number, {ac: any, style: NodeStyle}>;
   private dirtyRegions: Set<BoundingBox>;
   private isDirty: boolean;
   private transform: { x: number; y: number; scale: number };
@@ -40,6 +41,7 @@ export class CanvasRenderer implements IRenderer {
   private width: number;
   private height: number;
   private enableDirtyRegions: boolean;
+  private enableViewportCulling: boolean;
   private graph?: Graph; // Reference to graph for multi-edge bundling
   
   // Performance metrics
@@ -57,6 +59,7 @@ export class CanvasRenderer implements IRenderer {
     pixelRatio?: number;
     enableCache?: boolean;
     enableDirtyRegions?: boolean;
+    enableViewportCulling?: boolean;
   } = {}) {
     this.container = typeof container === 'string' 
       ? document.querySelector(container)! 
@@ -68,11 +71,13 @@ export class CanvasRenderer implements IRenderer {
 
     this.nodes = new Map();
     this.edges = new Map();
+    this.associationClasses = new Map();
     this.dirtyRegions = new Set();
     this.isDirty = true;
     this.transform = { x: 0, y: 0, scale: 1 };
     this.pixelRatio = options.pixelRatio || window.devicePixelRatio || 1;
     this.enableDirtyRegions = options.enableDirtyRegions !== false;
+    this.enableViewportCulling = options.enableViewportCulling !== false; // Default ON
     
     this.textMeasureCache = new Map();
     this.shapeCache = new Map();
@@ -131,6 +136,27 @@ export class CanvasRenderer implements IRenderer {
     this.graph = graph;
   }
 
+  /**
+   * Calculate viewport bounds in world space for culling
+   */
+  private getViewportBounds(): { x: number; y: number; width: number; height: number } {
+    const { x, y, scale } = this.transform;
+    // Convert screen space to world space
+    const worldX = -x / scale;
+    const worldY = -y / scale;
+    const worldWidth = this.width / scale;
+    const worldHeight = this.height / scale;
+    
+    // Add 20% margin to avoid pop-in at edges
+    const margin = 0.2;
+    return {
+      x: worldX - worldWidth * margin,
+      y: worldY - worldHeight * margin,
+      width: worldWidth * (1 + margin * 2),
+      height: worldHeight * (1 + margin * 2)
+    };
+  }
+
   private renderBackground(): void {
     const ctx = this.contexts.get('background')!;
     ctx.fillStyle = '#ffffff';
@@ -172,18 +198,79 @@ export class CanvasRenderer implements IRenderer {
 
     // Render edges
     const edgesCtx = this.contexts.get('edges')!;
-    this.edges.forEach(cachedEdge => {
-      this.renderEdge(edgesCtx, cachedEdge);
-    });
+    
+    // Viewport culling for edges
+    if (this.enableViewportCulling && this.graph && this.edges.size > 200) {
+      const viewportBounds = this.getViewportBounds();
+      const visibleEdges = this.graph.getEdgesInBounds(viewportBounds);
+      
+      visibleEdges.forEach(edge => {
+        const cached = this.edges.get(edge.id);
+        if (cached) {
+          // Skip self-loops - render them later on top
+          const sourceId = 'source' in edge ? edge.source : (edge as any).subject;
+          const targetId = 'target' in edge ? edge.target : (edge as any).object;
+          
+          if (sourceId !== targetId) {
+            this.renderEdge(edgesCtx, cached);
+          }
+        }
+      });
+    } else {
+      // Render all edges (small graphs or culling disabled)
+      this.edges.forEach(cachedEdge => {
+        // Skip self-loops - render them later on top
+        const edge = cachedEdge.edge;
+        const sourceId = 'source' in edge ? edge.source : (edge as any).subject;
+        const targetId = 'target' in edge ? edge.target : (edge as any).object;
+        
+        if (sourceId !== targetId) {
+          this.renderEdge(edgesCtx, cachedEdge);
+        }
+      });
+    }
 
     // Render nodes
     const nodesCtx = this.contexts.get('nodes')!;
-    this.nodes.forEach(cachedNode => {
-      this.renderNode(nodesCtx, cachedNode);
+    
+    // Viewport culling: only render visible nodes
+    if (this.enableViewportCulling && this.graph && this.nodes.size > 200) {
+      const viewportBounds = this.getViewportBounds();
+      const visibleNodes = this.graph.getNodesInBounds(viewportBounds);
+      
+      visibleNodes.forEach(node => {
+        const cached = this.nodes.get(node.id);
+        if (cached) {
+          this.renderNode(nodesCtx, cached);
+        }
+      });
+    } else {
+      // Render all nodes (small graphs or culling disabled)
+      this.nodes.forEach(cachedNode => {
+        this.renderNode(nodesCtx, cachedNode);
+      });
+    }
+
+    // Render association classes (hexagons attached to edges)
+    this.associationClasses.forEach(({ac, style}) => {
+      this.renderAssociationClass(nodesCtx, ac, style);
     });
 
-    // Render labels
+    // Render labels AND self-loops (so they appear on top)
     const labelsCtx = this.contexts.get('labels')!;
+    
+    // First render self-loops
+    this.edges.forEach(cachedEdge => {
+      const edge = cachedEdge.edge;
+      const sourceId = 'source' in edge ? edge.source : (edge as any).subject;
+      const targetId = 'target' in edge ? edge.target : (edge as any).object;
+      
+      if (sourceId === targetId) {
+        this.renderEdge(labelsCtx, cachedEdge);
+      }
+    });
+    
+    // Then render labels
     this.nodes.forEach(cachedNode => {
       this.renderNodeLabel(labelsCtx, cachedNode);
     });
@@ -415,6 +502,120 @@ export class CanvasRenderer implements IRenderer {
     ctx.restore();
   }
 
+  private renderAssociationClass(ctx: CanvasRenderingContext2D, ac: any, style: NodeStyle): void {
+    // Association classes attach to edge midpoints
+    // Calculate position from source edges
+    if (!ac.sourceEdges || ac.sourceEdges.length === 0) {
+      // If no edges, use explicit position if available
+      if (ac.position) {
+        const x = ac.position.x || 0;
+        const y = ac.position.y || 0;
+        this.renderHexagon(ctx, x, y, style);
+      }
+      return;
+    }
+
+    // Calculate midpoint from first edge (main attachment edge)
+    const firstEdgeId = ac.sourceEdges[0];
+    const edgeData = this.edges.get(firstEdgeId);
+    
+    if (!edgeData) return;
+    
+    const edge = edgeData.edge;
+    const sourceId = 'source' in edge ? edge.source : edge.subject;
+    const targetId = 'target' in edge ? edge.target : edge.object;
+    
+    const sourceNode = this.nodes.get(sourceId);
+    const targetNode = this.nodes.get(targetId);
+    
+    if (!sourceNode || !targetNode) return;
+    
+    const sx = (sourceNode.node as any).x || 0;
+    const sy = (sourceNode.node as any).y || 0;
+    const tx = (targetNode.node as any).x || 0;
+    const ty = (targetNode.node as any).y || 0;
+    
+    // Calculate midpoint (considering curvature if needed)
+    const bundleInfo = this.graph?.getEdgeBundleInfo(firstEdgeId);
+    const curvature = bundleInfo?.curvature ?? (edgeData.style.curvature !== undefined ? edgeData.style.curvature : 0.2);
+    const parallelOffset = bundleInfo?.parallelOffset ?? (edgeData.style.parallelOffset || 0);
+    
+    let midX: number, midY: number;
+    
+    if (curvature === 0 && parallelOffset === 0) {
+      // Straight line midpoint
+      midX = (sx + tx) / 2;
+      midY = (sy + ty) / 2;
+    } else {
+      // Curved edge midpoint (on bezier curve at t=0.5)
+      const dx = tx - sx;
+      const dy = ty - sy;
+      const distance = Math.sqrt(dx * dx + dy * dy);
+      const perpX = distance > 0 ? -dy / distance : 0;
+      const perpY = distance > 0 ? dx / distance : 0;
+      
+      const controlX = (sx + tx) / 2 + (-dy * curvature) + (perpX * parallelOffset);
+      const controlY = (sy + ty) / 2 + (dx * curvature) + (perpY * parallelOffset);
+      
+      // Bezier curve point at t=0.5
+      midX = (sx + 2 * controlX + tx) / 4;
+      midY = (sy + 2 * controlY + ty) / 4;
+    }
+    
+    // Render hexagon at midpoint
+    this.renderHexagon(ctx, midX, midY, style);
+    
+    // Render association class name/label
+    if (ac.name) {
+      ctx.save();
+      ctx.font = `${(style.label?.fontSize || 10)}px ${style.label?.fontFamily || 'Arial'}`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillStyle = style.label?.color || '#333';
+      
+      const offsetY = (style.radius || 30) + 15;
+      ctx.fillText(ac.name, midX, midY + offsetY);
+      ctx.restore();
+    }
+  }
+
+  private renderHexagon(ctx: CanvasRenderingContext2D, x: number, y: number, style: NodeStyle): void {
+    const size = style.radius || 30;
+    
+    ctx.save();
+    ctx.fillStyle = style.fill || '#9C27B0'; // Purple for association classes
+    ctx.strokeStyle = style.stroke || '#7B1FA2';
+    ctx.lineWidth = style.strokeWidth || 2;
+    
+    // Draw hexagon
+    ctx.beginPath();
+    for (let i = 0; i < 6; i++) {
+      const angle = (Math.PI / 3) * i - Math.PI / 2; // Start from top
+      const px = x + size * Math.cos(angle);
+      const py = y + size * Math.sin(angle);
+      
+      if (i === 0) {
+        ctx.moveTo(px, py);
+      } else {
+        ctx.lineTo(px, py);
+      }
+    }
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+    
+    // Render icon if provided
+    if (style.icon) {
+      ctx.fillStyle = '#ffffff';
+      ctx.font = `${size * 0.8}px Arial`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(style.icon, x, y);
+    }
+    
+    ctx.restore();
+  }
+
   private renderNodeLabel(ctx: CanvasRenderingContext2D, cached: CachedNode): void {
     const { node, style } = cached;
     const x = (node as any).x || 0;
@@ -602,13 +803,13 @@ export class CanvasRenderer implements IRenderer {
     if (style.glyphs && style.glyphs.length > 0) {
       style.glyphs.forEach(glyph => {
         if (curvature === 0 && parallelOffset === 0) {
-          this.renderGlyph(ctx, glyph, sx, sy, tx, ty, null);
+          this.renderGlyph(ctx, glyph, sx, sy, tx, ty, null, edge.id);
         } else {
-          this.renderGlyph(ctx, glyph, sx, sy, tx, ty, { x: controlX, y: controlY });
+          this.renderGlyph(ctx, glyph, sx, sy, tx, ty, { x: controlX, y: controlY }, edge.id);
         }
       });
     } else if (style.relationshipMode === 'inverse' && style.forwardPredicate && style.inversePredicate) {
-      // Auto-generate glyphs for inverse relationships
+      // Auto-generate glyphs and PropertyNodes for inverse relationships
       const sourceGlyph: any = {
         position: 0.15,
         text: style.forwardPredicate,
@@ -617,7 +818,8 @@ export class CanvasRenderer implements IRenderer {
         fill: style.stroke || '#95a5a6',
         stroke: '#ffffff',
         interactive: true,
-        direction: 'forward'
+        direction: 'forward',
+        propertyNodeId: `prop_${edge.id}_forward`
       };
       
       const targetGlyph: any = {
@@ -628,15 +830,16 @@ export class CanvasRenderer implements IRenderer {
         fill: style.stroke || '#95a5a6',
         stroke: '#ffffff',
         interactive: true,
-        direction: 'backward'
+        direction: 'backward',
+        propertyNodeId: `prop_${edge.id}_backward`
       };
       
       if (curvature === 0 && parallelOffset === 0) {
-        this.renderGlyph(ctx, sourceGlyph, sx, sy, tx, ty, null);
-        this.renderGlyph(ctx, targetGlyph, sx, sy, tx, ty, null);
+        this.renderGlyph(ctx, sourceGlyph, sx, sy, tx, ty, null, edge.id);
+        this.renderGlyph(ctx, targetGlyph, sx, sy, tx, ty, null, edge.id);
       } else {
-        this.renderGlyph(ctx, sourceGlyph, sx, sy, tx, ty, { x: controlX, y: controlY });
-        this.renderGlyph(ctx, targetGlyph, sx, sy, tx, ty, { x: controlX, y: controlY });
+        this.renderGlyph(ctx, sourceGlyph, sx, sy, tx, ty, { x: controlX, y: controlY }, edge.id);
+        this.renderGlyph(ctx, targetGlyph, sx, sy, tx, ty, { x: controlX, y: controlY }, edge.id);
       }
     }
 
@@ -653,7 +856,8 @@ export class CanvasRenderer implements IRenderer {
     startY: number,
     endX: number,
     endY: number,
-    controlPoint: { x: number; y: number } | null
+    controlPoint: { x: number; y: number } | null,
+    edgeId: string | number
   ): void {
     const t = glyph.position || 0.5;
     
@@ -856,6 +1060,68 @@ export class CanvasRenderer implements IRenderer {
   }
 
   /**
+   * Calculate point on node edge at given angle for various shapes
+   */
+  private getNodeEdgePoint(x: number, y: number, radius: number, angle: number, shape: string): { x: number; y: number } {
+    switch (shape) {
+      case 'circle':
+        return {
+          x: x + radius * Math.cos(angle),
+          y: y + radius * Math.sin(angle)
+        };
+      
+      case 'rectangle':
+      case 'square': {
+        // For rectangles, calculate intersection with rectangle edges
+        const rectSize = radius * 1.5;
+        const halfSize = rectSize / 2;
+        const dx = Math.cos(angle);
+        const dy = Math.sin(angle);
+        
+        // Find which edge the ray intersects
+        const t = Math.min(
+          Math.abs(halfSize / dx),
+          Math.abs(halfSize / dy)
+        );
+        
+        return {
+          x: x + t * dx,
+          y: y + t * dy
+        };
+      }
+      
+      case 'diamond': {
+        // Diamond is rotated 45 degrees
+        const rotatedAngle = angle - Math.PI / 4;
+        return {
+          x: x + radius * Math.cos(rotatedAngle) * 1.4,
+          y: y + radius * Math.sin(rotatedAngle) * 1.4
+        };
+      }
+      
+      case 'hexagon': {
+        // Hexagon has 6 sides
+        const sideAngle = Math.PI / 3; // 60 degrees
+        const normalizedAngle = ((angle % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
+        const sideIndex = Math.floor(normalizedAngle / sideAngle);
+        const midAngle = sideIndex * sideAngle + Math.PI / 2;
+        
+        return {
+          x: x + radius * Math.cos(midAngle),
+          y: y + radius * Math.sin(midAngle)
+        };
+      }
+      
+      default:
+        // Default to circle
+        return {
+          x: x + radius * Math.cos(angle),
+          y: y + radius * Math.sin(angle)
+        };
+    }
+  }
+
+  /**
    * Render self-loop edge
    */
   private renderSelfLoop(ctx: CanvasRenderingContext2D, edge: any, style: any): void {
@@ -867,71 +1133,63 @@ export class CanvasRenderer implements IRenderer {
     const x = (sourceNode.node as any).x || 0;
     const y = (sourceNode.node as any).y || 0;
     const nodeRadius = sourceNode.style.radius || 30;
+    const nodeShape = sourceNode.style.shape || 'circle';
     
+    // Get bundle info for multi-self-loop positioning
+    const bundleInfo = this.graph?.getEdgeBundleInfo(edge.id);
     const loopConfig = style.selfLoop || {};
-    const loopRadius = loopConfig.radius || 35;
-    const angle = ((loopConfig.angle || 45) * Math.PI / 180);  // Default 45 degrees (top-right)
-    const clockwise = loopConfig.clockwise !== false;
+    
+    // Much larger radius for visibility - loops extend well outside the node
+    const loopRadius = bundleInfo?.selfLoopRadius || loopConfig.radius || 100;
+    const angle = ((bundleInfo?.selfLoopAngle ?? loopConfig.angle ?? 45) * Math.PI / 180);
     
     ctx.save();
     
     ctx.strokeStyle = style.stroke || '#95a5a6';
-    ctx.lineWidth = style.strokeWidth || 2;
+    ctx.lineWidth = style.strokeWidth || 5; // Very thick for visibility
     
     if (style.strokeDasharray) {
       const dashArray = style.strokeDasharray.split(',').map((v: string) => parseFloat(v.trim()));
       ctx.setLineDash(dashArray);
     }
     
-    // Calculate attachment points on node circle - closer together for more circular loop
+    // Calculate attachment points on NODE EDGE based on shape
     const attachmentSpread = Math.PI / 6; // 30 degrees spread
     const startAngle = angle - attachmentSpread;
     const endAngle = angle + attachmentSpread;
     
-    const startX = x + nodeRadius * Math.cos(startAngle);
-    const startY = y + nodeRadius * Math.sin(startAngle);
-    const endX = x + nodeRadius * Math.cos(endAngle);
-    const endY = y + nodeRadius * Math.sin(endAngle);
+    // Use shape-aware edge points
+    const startPoint = this.getNodeEdgePoint(x, y, nodeRadius, startAngle, nodeShape);
+    const endPoint = this.getNodeEdgePoint(x, y, nodeRadius, endAngle, nodeShape);
     
-    // Control points for cubic bezier - positioned to create circular arc
-    // The key is to place control points further out and at wider angles
-    const controlDistance = nodeRadius + loopRadius;
-    const controlSpread = Math.PI / 2.5; // Control points spread wider for circular shape
+    const startX = startPoint.x;
+    const startY = startPoint.y;
+    const endX = endPoint.x;
+    const endY = endPoint.y;
     
-    const control1Angle = angle - controlSpread;
-    const control2Angle = angle + controlSpread;
+    // Control point extends far beyond the node for a large, visible loop
+    const controlDistance = nodeRadius + loopRadius * 2;
+    const controlX = x + controlDistance * Math.cos(angle);
+    const controlY = y + controlDistance * Math.sin(angle);
     
-    const control1X = x + controlDistance * Math.cos(control1Angle);
-    const control1Y = y + controlDistance * Math.sin(control1Angle);
-    const control2X = x + controlDistance * Math.cos(control2Angle);
-    const control2Y = y + controlDistance * Math.sin(control2Angle);
-    
-    // Draw cubic bezier curve
+    // Draw the loop
     ctx.beginPath();
     ctx.moveTo(startX, startY);
-    ctx.bezierCurveTo(control1X, control1Y, control2X, control2Y, endX, endY);
+    ctx.quadraticCurveTo(controlX, controlY, endX, endY);
     ctx.stroke();
     
     // Draw arrow at end if configured
     const arrowConfig = this.normalizeArrowConfig(style.arrow);
     
     if (arrowConfig.position === 'forward' || arrowConfig.position === 'both') {
-      // Calculate tangent at end point for arrow direction
-      const t = 1.0;
-      const tangentAngle = this.getCubicBezierTangentAngle(
-        startX, startY, control1X, control1Y,
-        control2X, control2Y, endX, endY, t
-      );
-      this.drawArrowHeadAtPoint(ctx, endX, endY, tangentAngle, arrowConfig);
+      // Calculate tangent at end point
+      const tangent = this.getQuadraticBezierTangent(startX, startY, controlX, controlY, endX, endY, 1.0);
+      this.drawArrowHeadAtPoint(ctx, endX, endY, tangent.angle, arrowConfig);
     }
     
     if (arrowConfig.position === 'backward' || arrowConfig.position === 'both') {
-      const t = 0.0;
-      const tangentAngle = this.getCubicBezierTangentAngle(
-        startX, startY, control1X, control1Y,
-        control2X, control2Y, endX, endY, t
-      ) + Math.PI;
-      this.drawArrowHeadAtPoint(ctx, startX, startY, tangentAngle, arrowConfig);
+      const tangent = this.getQuadraticBezierTangent(startX, startY, controlX, controlY, endX, endY, 0.0);
+      this.drawArrowHeadAtPoint(ctx, startX, startY, tangent.angle + Math.PI, arrowConfig);
     }
     
     ctx.restore();
@@ -1011,37 +1269,74 @@ export class CanvasRenderer implements IRenderer {
     const tx = (targetNode.node as any).x || 0;
     const ty = (targetNode.node as any).y || 0;
 
-    // Calculate label position at edge midpoint
-    const dx = tx - sx;
-    const dy = ty - sy;
-    
-    // Get curvature from bundler (same logic as renderEdge)
-    const bundleInfo = this.graph?.getEdgeBundleInfo(edge.id);
-    const curvature = bundleInfo?.curvature ?? (style.curvature !== undefined ? style.curvature : 0.2);
-    const parallelOffset = bundleInfo?.parallelOffset ?? (style.parallelOffset || 0);
-    
     let labelX: number, labelY: number;
-    
-    if (curvature === 0 && parallelOffset === 0) {
-      // Straight line - use simple midpoint
-      labelX = (sx + tx) / 2;
-      labelY = (sy + ty) / 2;
+    let labelAngle = 0;
+
+    // Handle self-loops differently
+    if (sourceId === targetId) {
+      const nodeRadius = sourceNode.style.radius || 30;
+      const nodeShape = sourceNode.style.shape || 'circle';
+      
+      const bundleInfo = this.graph?.getEdgeBundleInfo(edge.id);
+      const loopConfig = style.selfLoop || {};
+      const loopRadius = bundleInfo?.selfLoopRadius || loopConfig.radius || 100;
+      const angle = ((bundleInfo?.selfLoopAngle ?? loopConfig.angle ?? 45) * Math.PI / 180);
+      
+      // Calculate attachment points
+      const attachmentSpread = Math.PI / 6;
+      const startAngle = angle - attachmentSpread;
+      const endAngle = angle + attachmentSpread;
+      
+      const startPoint = this.getNodeEdgePoint(sx, sy, nodeRadius, startAngle, nodeShape);
+      const endPoint = this.getNodeEdgePoint(sx, sy, nodeRadius, endAngle, nodeShape);
+      
+      const controlDistance = nodeRadius + loopRadius * 2;
+      const controlX = sx + controlDistance * Math.cos(angle);
+      const controlY = sy + controlDistance * Math.sin(angle);
+      
+      // Label at the apex of the loop (t=0.5)
+      const midPoint = this.getQuadraticBezierPoint(
+        startPoint.x, startPoint.y,
+        controlX, controlY,
+        endPoint.x, endPoint.y,
+        0.5
+      );
+      
+      labelX = midPoint.x;
+      labelY = midPoint.y;
+      labelAngle = angle; // Orient label with loop
     } else {
-      // Curved line - use bezier midpoint
-      const distance = Math.sqrt(dx * dx + dy * dy);
-      const midX = (sx + tx) / 2;
-      const midY = (sy + ty) / 2;
+      // Regular edge label calculation
+      const dx = tx - sx;
+      const dy = ty - sy;
+      labelAngle = Math.atan2(dy, dx);
+    
+      // Get curvature from bundler (same logic as renderEdge)
+      const bundleInfo = this.graph?.getEdgeBundleInfo(edge.id);
+      const curvature = bundleInfo?.curvature ?? (style.curvature !== undefined ? style.curvature : 0.2);
+      const parallelOffset = bundleInfo?.parallelOffset ?? (style.parallelOffset || 0);
       
-      // Perpendicular offset for multi-edges
-      const perpX = distance > 0 ? -dy / distance : 0;
-      const perpY = distance > 0 ? dx / distance : 0;
-      
-      const controlX = midX + (-dy * curvature) + (perpX * parallelOffset);
-      const controlY = midY + (dx * curvature) + (perpY * parallelOffset);
-      
-      // Bezier curve midpoint at t=0.5
-      labelX = (sx + 2 * controlX + tx) / 4;
-      labelY = (sy + 2 * controlY + ty) / 4;
+      if (curvature === 0 && parallelOffset === 0) {
+        // Straight line - use simple midpoint
+        labelX = (sx + tx) / 2;
+        labelY = (sy + ty) / 2;
+      } else {
+        // Curved line - use bezier midpoint
+        const distance = Math.sqrt(dx * dx + dy * dy);
+        const midX = (sx + tx) / 2;
+        const midY = (sy + ty) / 2;
+        
+        // Perpendicular offset for multi-edges
+        const perpX = distance > 0 ? -dy / distance : 0;
+        const perpY = distance > 0 ? dx / distance : 0;
+        
+        const controlX = midX + (-dy * curvature) + (perpX * parallelOffset);
+        const controlY = midY + (dx * curvature) + (perpY * parallelOffset);
+        
+        // Bezier curve midpoint at t=0.5
+        labelX = (sx + 2 * controlX + tx) / 4;
+        labelY = (sy + 2 * controlY + ty) / 4;
+      }
     }
 
     ctx.save();
@@ -1052,11 +1347,10 @@ export class CanvasRenderer implements IRenderer {
     
     // Rotate label to align with edge if enabled
     if (label.rotateWithEdge !== false) { // Default to true
-      const angle = Math.atan2(dy, dx);
       // Keep text upright - flip if angle is upside down
-      let displayAngle = angle;
-      if (Math.abs(angle) > Math.PI / 2) {
-        displayAngle = angle + Math.PI;
+      let displayAngle = labelAngle;
+      if (Math.abs(labelAngle) > Math.PI / 2) {
+        displayAngle = labelAngle + Math.PI;
       }
       ctx.translate(labelX, labelY);
       ctx.rotate(displayAngle);
@@ -1143,9 +1437,32 @@ export class CanvasRenderer implements IRenderer {
     }
   }
 
+  addAssociationClass(ac: any, style: NodeStyle): void {
+    this.associationClasses.set(ac.id, { ac, style });
+    this.markDirty();
+  }
+
+  updateAssociationClass(id: string | number, updates: any, style?: NodeStyle): void {
+    const existing = this.associationClasses.get(id);
+    if (existing) {
+      const updatedAc = { ...existing.ac, ...updates };
+      const updatedStyle = style || existing.style;
+      this.associationClasses.set(id, { ac: updatedAc, style: updatedStyle });
+      this.markDirty();
+    }
+  }
+
+  removeAssociationClass(id: string | number): void {
+    if (this.associationClasses.has(id)) {
+      this.associationClasses.delete(id);
+      this.markDirty();
+    }
+  }
+
   clear(): void {
     this.nodes.clear();
     this.edges.clear();
+    this.associationClasses.clear();
     this.markDirty();
   }
 
@@ -1157,6 +1474,7 @@ export class CanvasRenderer implements IRenderer {
     this.contexts.clear();
     this.nodes.clear();
     this.edges.clear();
+    this.associationClasses.clear();
     this.textMeasureCache.clear();
     this.shapeCache.clear();
   }

@@ -32,8 +32,8 @@ export async function renderHome(): Promise<void> {
               interactive network diagrams, knowledge graphs, and data visualization applications.
             </p>
             <div class="cta-buttons">
-              <a href="/demos" class="btn btn-primary">Explore Demos</a>
-              <a href="/docs" class="btn btn-secondary">Read Documentation</a>
+              <a href="/docs" class="btn btn-primary">Get Started</a>
+              <a href="/demos" class="btn btn-secondary">Explore Demos</a>
             </div>
           </div>
           <div class="hero-visual">

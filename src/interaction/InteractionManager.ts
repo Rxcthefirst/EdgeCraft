@@ -87,9 +87,9 @@ export class InteractionManager {
     // Setup zoom/pan
     if (this.config.zoomable) {
       this.zoomBehavior = zoom<HTMLElement, unknown>()
-        .scaleExtent([0.1, 10])
+        .scaleExtent([0.3, 5]) // More reasonable zoom range
         .filter((event) => {
-          // Allow zoom with wheel
+          // Allow zoom with wheel only
           if (event.type === 'wheel') return true;
           
           // Block all zoom/pan for click events - we handle those separately
@@ -98,8 +98,11 @@ export class InteractionManager {
           // Block zoom/pan when dragging a node
           if (this.draggedNode !== null) return false;
           
-          // For mousedown, only allow if not on a node or edge
-          if (event.type === 'mousedown' && !event.shiftKey) {
+          // For mousedown, only allow pan if not on a node or edge and user is holding space or middle mouse
+          if (event.type === 'mousedown') {
+            // Middle mouse button or space+left click for panning
+            if (event.button === 1) return true; // Middle mouse
+            
             const mousePos = this.getMousePosition(event);
             const worldPos = this.screenToWorld(mousePos);
             const node = this.getNodeAtPosition(worldPos);
@@ -707,6 +710,18 @@ export class InteractionManager {
     this.clearSelection();
     this.selectedNodes.add(nodeId);
     this.highlightNode(nodeId, true);
+    
+    // Emit nodeSelected event for UI components like Inspector
+    const node = this.nodes.get(nodeId);
+    if (node) {
+      this.emit({
+        type: 'nodeSelected' as any,
+        target: node,
+        position: { x: 0, y: 0 },
+        originalEvent: new Event('nodeSelected'),
+        data: { node }
+      });
+    }
   }
 
   toggleNodeSelection(nodeId: string | number): void {
@@ -720,6 +735,8 @@ export class InteractionManager {
   }
 
   clearSelection(): void {
+    const hadSelection = this.selectedNodes.size > 0 || this.selectedEdges.size > 0;
+    
     this.selectedNodes.forEach((nodeId) => {
       this.highlightNode(nodeId, false);
     });
@@ -729,6 +746,16 @@ export class InteractionManager {
       this.highlightEdge(edgeId, false);
     });
     this.selectedEdges.clear();
+    
+    // Emit selectionCleared event for UI components like Inspector
+    if (hadSelection) {
+      this.emit({
+        type: 'selectionCleared' as any,
+        target: null,
+        position: { x: 0, y: 0 },
+        originalEvent: new Event('selectionCleared')
+      });
+    }
   }
 
   clearNodeSelection(): void {
@@ -749,6 +776,18 @@ export class InteractionManager {
     this.clearSelection();
     this.selectedEdges.add(edgeId);
     this.highlightEdge(edgeId, true);
+    
+    // Emit edgeSelected event for UI components like Inspector
+    const edge = this.edges.get(edgeId);
+    if (edge) {
+      this.emit({
+        type: 'edgeSelected' as any,
+        target: edge,
+        position: { x: 0, y: 0 },
+        originalEvent: new Event('edgeSelected'),
+        data: { edge }
+      });
+    }
   }
 
   toggleEdgeSelection(edgeId: string | number): void {

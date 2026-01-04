@@ -3,17 +3,44 @@ import { CanvasRenderer } from './CanvasRenderer';
 import { WebGLRenderer } from './WebGLRenderer';
 
 /**
- * Factory for creating appropriate renderer based on graph size and configuration
- * Canvas-only approach like Keylines (no SVG for production)
+ * Factory for creating appropriate renderer based on configuration
+ * 
+ * Renderer Selection Strategy (Keylines-style):
+ * - Default: WebGL (best performance, GPU-accelerated)
+ * - Fallback: Canvas if WebGL not supported
+ * - Explicit: Developer can force 'canvas' renderer if needed
+ * 
+ * Usage:
+ * - Auto (default): `renderer: { type: 'auto' }` or omit type
+ * - Force WebGL: `renderer: { type: 'webgl' }` (falls back to Canvas if not supported)
+ * - Force Canvas: `renderer: { type: 'canvas' }`
  */
 export class RendererFactory {
   /**
    * Create a renderer based on configuration and graph size
+   * Default behavior (like Keylines):
+   * - Try WebGL first for best performance
+   * - Fallback to Canvas if WebGL not supported
+   * - Allow explicit 'canvas' choice if developer prefers it
    */
   static create(config: RendererConfig, nodeCount: number = 0): IRenderer {
-    const type = config.type === 'auto' || !config.type
-      ? this.autoDetect(nodeCount)
-      : config.type;
+    let type: RendererType;
+
+    if (config.type === 'canvas') {
+      // Explicit Canvas choice - respect developer's preference
+      type = 'canvas';
+    } else if (config.type === 'webgl') {
+      // Explicit WebGL choice - try WebGL, fallback to Canvas if not supported
+      if (this.isSupported('webgl')) {
+        type = 'webgl';
+      } else {
+        console.warn('WebGL not supported in this environment. Falling back to Canvas renderer.');
+        type = 'canvas';
+      }
+    } else {
+      // Auto mode (default): Try WebGL first, fallback to Canvas
+      type = this.autoDetect(nodeCount);
+    }
 
     switch (type) {
       case 'canvas':
@@ -50,16 +77,19 @@ export class RendererFactory {
   }
 
   /**
-   * Auto-detect best renderer based on graph size (Canvas/WebGL only)
-   * - Canvas: < 5000 nodes (excellent performance with dirty regions)
-   * - WebGL: 5000+ nodes (GPU acceleration for massive graphs)
+   * Auto-detect best renderer (Keylines-style behavior)
+   * Default: Always try WebGL first (best performance)
+   * Fallback: Canvas if WebGL not supported
    */
-  private static autoDetect(nodeCount: number): RendererType {
-    if (nodeCount < 5000) {
-      return 'canvas';
-    } else {
+  private static autoDetect(_nodeCount: number): RendererType {
+    // Try WebGL first (like Keylines)
+    if (this.isSupported('webgl')) {
       return 'webgl';
     }
+    
+    // Fallback to Canvas if WebGL not supported
+    console.warn('WebGL not supported. Using Canvas renderer.');
+    return 'canvas';
   }
 
   /**
@@ -89,40 +119,32 @@ export class RendererFactory {
 
   /**
    * Get recommended renderer for current environment and graph size
+   * Follows Keylines pattern: WebGL preferred, Canvas fallback
    */
-  static recommend(nodeCount: number): {
+  static recommend(_nodeCount: number): {
     type: RendererType;
     reason: string;
   } {
-    if (nodeCount < 5000) {
-      if (this.isSupported('canvas')) {
-        return {
-          type: 'canvas',
-          reason: 'Canvas provides excellent performance for graphs up to 5000 nodes'
-        };
-      } else {
-        return {
-          type: 'canvas',
-          reason: 'Canvas is the only supported renderer'
-        };
-      }
-    } else {
-      if (this.isSupported('webgl')) {
-        return {
-          type: 'webgl',
-          reason: 'WebGL required for large graphs (GPU acceleration)'
-        };
-      } else if (this.isSupported('canvas')) {
-        return {
-          type: 'canvas',
-          reason: 'WebGL not supported, using Canvas (may be slow for large graphs)'
-        };
-      } else {
-        return {
-          type: 'canvas',
-          reason: 'Canvas fallback (performance may be limited)'
-        };
-      }
+    // Always prefer WebGL for best performance (like Keylines)
+    if (this.isSupported('webgl')) {
+      return {
+        type: 'webgl',
+        reason: 'WebGL provides best performance with GPU acceleration'
+      };
     }
+    
+    // Fallback to Canvas if WebGL not supported
+    if (this.isSupported('canvas')) {
+      return {
+        type: 'canvas',
+        reason: 'WebGL not supported - using Canvas renderer'
+      };
+    }
+    
+    // Last resort fallback
+    return {
+      type: 'canvas',
+      reason: 'Canvas fallback (performance may be limited)'
+    };
   }
 }

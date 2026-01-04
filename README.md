@@ -309,6 +309,7 @@ interface EdgeCraftConfig {
   interaction?: InteractionConfig;         // Interaction settings
   nodeStyle?: NodeStyle | StyleFunction;   // Node visual styling
   edgeStyle?: EdgeStyle | StyleFunction;   // Edge visual styling
+  renderer?: RendererConfig;               // Renderer configuration (see below)
   width?: number;                          // Canvas width
   height?: number;                         // Canvas height
   backgroundColor?: string;                // Background color
@@ -316,6 +317,62 @@ interface EdgeCraftConfig {
   maxZoom?: number;                        // Maximum zoom level
 }
 ```
+
+### Renderer Configuration
+
+EdgeCraft uses a **WebGL-first** approach (like Keylines) for optimal performance:
+
+```typescript
+// Default behavior: WebGL with Canvas fallback
+const graph = new EdgeCraft({
+  container: '#graph',
+  data: myData
+  // Automatically uses WebGL if supported, falls back to Canvas
+});
+
+// Explicit WebGL (with Canvas fallback if not supported)
+const graph = new EdgeCraft({
+  container: '#graph',
+  data: myData,
+  renderer: {
+    type: 'webgl'  // Tries WebGL, auto-falls back to Canvas
+  }
+});
+
+// Force Canvas renderer (useful for testing or specific requirements)
+const graph = new EdgeCraft({
+  container: '#graph',
+  data: myData,
+  renderer: {
+    type: 'canvas',  // Explicitly use Canvas renderer
+    enableCache: true,
+    enableDirtyRegions: true  // Optimize Canvas performance
+  }
+});
+
+// Renderer with additional options
+const graph = new EdgeCraft({
+  container: '#graph',
+  data: myData,
+  renderer: {
+    type: 'auto',  // Default: WebGL-first with Canvas fallback
+    pixelRatio: window.devicePixelRatio,  // For high-DPI displays
+    enableCache: true,  // Cache rendered elements (Canvas only)
+    enableDirtyRegions: true  // Only re-render changed areas (Canvas only)
+  }
+});
+```
+
+**Renderer Types:**
+- **`'auto'` (default)**: Tries WebGL first, falls back to Canvas if not supported
+- **`'webgl'`**: Explicitly requests WebGL (falls back to Canvas if not available)
+- **`'canvas'`**: Forces Canvas renderer (good for compatibility or debugging)
+
+**Why WebGL-first?**
+- 🚀 GPU-accelerated rendering for better performance
+- 📊 Handles large graphs (10,000+ nodes) efficiently
+- ⚡ Smooth animations and interactions
+- 🔄 Automatic fallback ensures compatibility
 
 ## 📖 API Reference
 
@@ -440,5 +497,6 @@ EdgeCraft builds upon the excellent work of:
 
 ---
 
-Made with ❤️ for the graph visualization community#   E d g e C r a f t  
+Made with ❤️ for the graph visualization community#   E d g e C r a f t 
+ 
  

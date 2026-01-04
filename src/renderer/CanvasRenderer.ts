@@ -337,6 +337,7 @@ export class CanvasRenderer implements IRenderer {
         break;
 
       case 'rectangle':
+      case 'square':
         const rectSize = (style.radius || 30) * 1.5;
         ctx.fillRect(x - rectSize / 2, y - rectSize / 2, rectSize, rectSize);
         ctx.strokeRect(x - rectSize / 2, y - rectSize / 2, rectSize, rectSize);
@@ -345,6 +346,55 @@ export class CanvasRenderer implements IRenderer {
         if (style.icon && style.displayMode !== 'detailed') {
           ctx.fillStyle = '#ffffff';
           ctx.font = `${(style.radius || 30) * 0.8}px Arial`;
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillText(style.icon, x, y);
+        }
+        break;
+
+      case 'triangle':
+        const triSize = style.radius || 30;
+        ctx.beginPath();
+        ctx.moveTo(x, y - triSize);
+        ctx.lineTo(x + triSize * 0.866, y + triSize * 0.5);
+        ctx.lineTo(x - triSize * 0.866, y + triSize * 0.5);
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+        
+        // Render icon inside the shape if provided (simple mode)
+        if (style.icon && style.displayMode !== 'detailed') {
+          ctx.fillStyle = '#ffffff';
+          ctx.font = `${triSize * 0.6}px Arial`;
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillText(style.icon, x, y);
+        }
+        break;
+
+      case 'star':
+        const starSize = style.radius || 30;
+        const spikes = 5;
+        const outerRadius = starSize;
+        const innerRadius = starSize * 0.5;
+        
+        ctx.beginPath();
+        for (let i = 0; i < spikes * 2; i++) {
+          const radius = i % 2 === 0 ? outerRadius : innerRadius;
+          const angle = (Math.PI * i) / spikes - Math.PI / 2;
+          const sx = x + radius * Math.cos(angle);
+          const sy = y + radius * Math.sin(angle);
+          if (i === 0) ctx.moveTo(sx, sy);
+          else ctx.lineTo(sx, sy);
+        }
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+        
+        // Render icon inside the shape if provided (simple mode)
+        if (style.icon && style.displayMode !== 'detailed') {
+          ctx.fillStyle = '#ffffff';
+          ctx.font = `${starSize * 0.5}px Arial`;
           ctx.textAlign = 'center';
           ctx.textBaseline = 'middle';
           ctx.fillText(style.icon, x, y);

@@ -31,6 +31,11 @@ export default async function() {
   const graph = new EdgeCraft({
     container,
     data: graphData,
+    renderer: {
+      type: 'canvas', // Auto-detect: will use WebGL for better performance, fallback to Canvas
+      enableCache: true,
+      enableDirtyRegions: true,
+    },
     layout: {
       type: 'force',
     },

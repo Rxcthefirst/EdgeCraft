@@ -102,8 +102,26 @@ export interface NodeStyle {
   stroke?: string;
   strokeWidth?: number;
   radius?: number;
-  shape?: 'circle' | 'rectangle' | 'diamond' | 'hexagon' | 'window';
-  icon?: string; // Emoji or text to render inside the shape
+  shape?: 'circle' | 'rectangle' | 'diamond' | 'hexagon' | 'star' | 'roundrect' | 'window';
+  
+  // Image/Icon rendering (WebGL texture-based)
+  image?: {
+    type: 'svg' | 'png' | 'jpg' | 'fonticon';
+    url?: string; // URL or data URI for svg/png/jpg
+    data?: string; // Inline SVG markup
+    fontIcon?: {
+      family: string; // e.g., 'Font Awesome', 'Material Icons'
+      character: string; // Unicode character or CSS class
+      size?: number;
+      color?: string;
+    };
+    width?: number;
+    height?: number;
+    scale?: number; // Scale factor for image
+    opacity?: number;
+  };
+  
+  icon?: string; // Emoji or text to render inside the shape (legacy)
   displayMode?: 'simple' | 'detailed'; // Simple: just icon, Detailed: full window
   window?: {
     width?: number;

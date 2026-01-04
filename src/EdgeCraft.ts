@@ -177,10 +177,148 @@ export class EdgeCraft {
   // Rendering
   // ============================================================================
 
-  render(): void {
-    const baseNodeStyle = this.config.nodeStyle || this.getDefaultNodeStyle();
-    const baseEdgeStyle = this.config.edgeStyle || this.getDefaultEdgeStyle();
+  /**
+   * Resolve style properties that might be functions
+   * Handles both entire style as function and individual properties as functions
+   */
+  private resolveNodeStyle(node: GraphNode): NodeStyle {
+    const baseStyle = this.config.nodeStyle || this.getDefaultNodeStyle();
+    const defaultStyle = this.getDefaultNodeStyle();
+    
+    // If the entire style is a function, call it
+    if (typeof baseStyle === 'function') {
+      const style = { ...defaultStyle, ...baseStyle(node) as NodeStyle };
+      return this.applySelectionStyle(node, style);
+    }
+    
+    // Otherwise, resolve individual property functions
+    const resolvedStyle: NodeStyle = { ...defaultStyle, ...baseStyle };
+    
+    // Resolve fill if it's a function
+    if (typeof baseStyle.fill === 'function') {
+      resolvedStyle.fill = baseStyle.fill(node);
+    }
+    
+    // Resolve stroke if it's a function
+    if (typeof baseStyle.stroke === 'function') {
+      resolvedStyle.stroke = baseStyle.stroke(node);
+    }
+    
+    // Resolve other function properties as needed
+    if (typeof baseStyle.radius === 'function') {
+      resolvedStyle.radius = baseStyle.radius(node);
+    }
+    
+    if (typeof baseStyle.strokeWidth === 'function') {
+      resolvedStyle.strokeWidth = baseStyle.strokeWidth(node);
+    }
+    
+    if (typeof baseStyle.shape === 'function') {
+      resolvedStyle.shape = baseStyle.shape(node);
+    }
+    
+    if (typeof baseStyle.strokeDasharray === 'function') {
+      resolvedStyle.strokeDasharray = baseStyle.strokeDasharray(node);
+    }
+    
+    // Resolve icon if it's a function
+    if (typeof baseStyle.icon === 'function') {
+      resolvedStyle.icon = baseStyle.icon(node);
+    }
+    
+    // Resolve window properties if it's a function
+    if (typeof baseStyle.window === 'function') {
+      resolvedStyle.window = baseStyle.window(node);
+    }
+    
+    // Resolve label properties
+    if (baseStyle.label) {
+      resolvedStyle.label = { ...baseStyle.label };
+      
+      // Set label text from node.label if not already set
+      if (!resolvedStyle.label.text && node.label) {
+        resolvedStyle.label.text = node.label;
+      }
+      
+      // Resolve label property functions
+      if (typeof baseStyle.label.visible === 'function') {
+        resolvedStyle.label.visible = baseStyle.label.visible(node);
+      }
+      if (typeof baseStyle.label.fontSize === 'function') {
+        resolvedStyle.label.fontSize = baseStyle.label.fontSize(node);
+      }
+      if (typeof baseStyle.label.color === 'function') {
+        resolvedStyle.label.color = baseStyle.label.color(node);
+      }
+      if (typeof baseStyle.label.fontWeight === 'function') {
+        resolvedStyle.label.fontWeight = baseStyle.label.fontWeight(node);
+      }
+      if (typeof baseStyle.label.position === 'function') {
+        resolvedStyle.label.position = baseStyle.label.position(node);
+      }
+    } else if (node.label) {
+      // If no label config but node has label, create default label
+      resolvedStyle.label = {
+        text: node.label,
+        visible: true,
+        position: 'center',
+      };
+    }
+    
+    return this.applySelectionStyle(node, resolvedStyle);
+  }
+  
+  /**
+   * Apply visual highlighting to selected nodes
+   */
+  private applySelectionStyle(node: GraphNode, style: NodeStyle): NodeStyle {
+    const isSelected = ('properties' in node && node.properties?.selected) || (node as any).selected;
+    
+    if (isSelected) {
+      return {
+        ...style,
+        stroke: '#2563eb', // Blue selection border
+        strokeWidth: (style.strokeWidth || 2) + 3, // Thicker border
+      };
+    }
+    
+    return style;
+  }
 
+  /**
+   * Resolve edge style properties that might be functions
+   */
+  private resolveEdgeStyle(edge: GraphEdge): EdgeStyle {
+    const baseStyle = this.config.edgeStyle || this.getDefaultEdgeStyle();
+    const defaultStyle = this.getDefaultEdgeStyle();
+    
+    // If the entire style is a function, call it
+    if (typeof baseStyle === 'function') {
+      return { ...defaultStyle, ...baseStyle(edge) as EdgeStyle };
+    }
+    
+    // Otherwise, resolve individual property functions
+    const resolvedStyle: EdgeStyle = { ...defaultStyle, ...baseStyle };
+    
+    // Resolve stroke if it's a function
+    if (typeof baseStyle.stroke === 'function') {
+      resolvedStyle.stroke = baseStyle.stroke(edge);
+    }
+    
+    // Resolve strokeWidth if it's a function
+    if (typeof baseStyle.strokeWidth === 'function') {
+      resolvedStyle.strokeWidth = baseStyle.strokeWidth(edge);
+    }
+    
+    // Resolve other function properties
+    if (typeof baseStyle.strokeDasharray === 'function') {
+      resolvedStyle.strokeDasharray = baseStyle.strokeDasharray(edge);
+    }
+    
+    return resolvedStyle;
+  }
+
+  render(): void {
     // Canvas/WebGL renderers use incremental updates
     // Clear and rebuild from graph data
     this.renderer.clear();
@@ -200,22 +338,13 @@ export class EdgeCraft {
     
     // Render nodes with their styles
     this.graph.getAllNodes().forEach((node) => {
-      
-      // Compute style (handle StyleFunction)
-      const nodeStyle = typeof baseNodeStyle === 'function'
-        ? { ...this.getDefaultNodeStyle(), ...baseNodeStyle(node) as NodeStyle }
-        : baseNodeStyle;
-      
+      const nodeStyle = this.resolveNodeStyle(node);
       this.renderer.addNode(node, nodeStyle);
     });
     
     // Add all edges
     this.graph.getAllEdges().forEach((edge) => {
-      // Compute style (handle StyleFunction)
-      const edgeStyle = typeof baseEdgeStyle === 'function'
-        ? { ...this.getDefaultEdgeStyle(), ...baseEdgeStyle(edge) as EdgeStyle }
-        : baseEdgeStyle;
-      
+      const edgeStyle = this.resolveEdgeStyle(edge);
       this.renderer.addEdge(edge, edgeStyle);
     });
     
@@ -228,16 +357,11 @@ export class EdgeCraft {
    * This is much more efficient than re-rendering the entire graph
    */
   private updateSelectionStyles(event: any): void {
-    const baseNodeStyle = this.config.nodeStyle || this.getDefaultNodeStyle();
-    const baseEdgeStyle = this.config.edgeStyle || this.getDefaultEdgeStyle();
-    
     // Update the specific node or edge that was selected/deselected
     if (event.data?.nodeId !== undefined) {
       const node = this.graph.getNode(event.data.nodeId);
       if (node) {
-        const nodeStyle = typeof baseNodeStyle === 'function'
-          ? { ...this.getDefaultNodeStyle(), ...baseNodeStyle(node) as NodeStyle }
-          : baseNodeStyle;
+        const nodeStyle = this.resolveNodeStyle(node);
         this.renderer.updateNode(node.id, {}, nodeStyle);
       }
     }
@@ -245,9 +369,7 @@ export class EdgeCraft {
     if (event.data?.edgeId !== undefined) {
       const edge = this.graph.getEdge(event.data.edgeId);
       if (edge) {
-        const edgeStyle = typeof baseEdgeStyle === 'function'
-          ? { ...this.getDefaultEdgeStyle(), ...baseEdgeStyle(edge) as EdgeStyle }
-          : baseEdgeStyle;
+        const edgeStyle = this.resolveEdgeStyle(edge);
         this.renderer.updateEdge(edge.id, {}, edgeStyle);
       }
     }

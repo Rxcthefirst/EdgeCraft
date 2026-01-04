@@ -4,6 +4,10 @@
 
 import { Graph } from '../core/Graph';
 import { GraphNode, Position, LayoutConfig } from '../types';
+import { RadialTreeLayout } from './RadialTreeLayout';
+import { TreeLayout } from './TreeLayout';
+import { OrganicLayout } from './OrganicLayout';
+import { GeometricLayout } from './GeometricLayout';
 
 export interface LayoutEngine {
   compute(graph: Graph, config: LayoutConfig): Map<string | number, Position>;
@@ -242,6 +246,36 @@ export function getLayoutEngine(type: string): LayoutEngine {
       return new CircularLayout();
     case 'grid':
       return new GridLayout();
+    case 'radialtree':
+    case 'radial-tree':
+    case 'radial':
+      return {
+        compute: (graph: Graph, config: LayoutConfig) => {
+          const layout = new RadialTreeLayout(config);
+          return layout.compute(graph);
+        }
+      };
+    case 'tree':
+      return {
+        compute: (graph: Graph, config: LayoutConfig) => {
+          const layout = new TreeLayout(config);
+          return layout.compute(graph);
+        }
+      };
+    case 'organic':
+      return {
+        compute: (graph: Graph, config: LayoutConfig) => {
+          const layout = new OrganicLayout(config);
+          return layout.compute(graph);
+        }
+      };
+    case 'geometric':
+      return {
+        compute: (graph: Graph, config: LayoutConfig) => {
+          const layout = new GeometricLayout(config);
+          return layout.compute(graph);
+        }
+      };
     default:
       return new ForceDirectedLayout();
   }

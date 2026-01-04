@@ -32,6 +32,12 @@ export class Router {
    */
   private async handleRoute(): Promise<void> {
     const path = window.location.pathname;
+    
+    // Cleanup previous route if path is changing
+    if (path !== this.currentPath) {
+      this.cleanup();
+    }
+    
     this.currentPath = path;
 
     // Find matching route
@@ -89,6 +95,30 @@ export class Router {
 
     e.preventDefault();
     this.navigate(href);
+  }
+
+  /**
+   * Cleanup current route
+   */
+  private cleanup(): void {
+    // Call cleanup functions registered by demos
+    const win = window as any;
+    
+    if (win.__timeSeriesCleanup) {
+      win.__timeSeriesCleanup();
+      delete win.__timeSeriesCleanup;
+    }
+    
+    if (win.__animatedAdaptiveCleanup) {
+      win.__animatedAdaptiveCleanup();
+      delete win.__animatedAdaptiveCleanup;
+    }
+    
+    // Clear graph container
+    const container = document.getElementById('graph-container');
+    if (container) {
+      container.innerHTML = '';
+    }
   }
 
   /**

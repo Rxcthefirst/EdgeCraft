@@ -1,12 +1,19 @@
 import { GraphNode, GraphEdge, NodeStyle, EdgeStyle, PropertyNode } from '../types';
 import { IRenderer, RendererMetrics } from './IRenderer';
 import type { Graph } from '../core/Graph';
+import { WebGLShapeRenderer } from './WebGLShapeRenderer';
+import { WebGLTextureManager, TextureInfo } from './WebGLTextureManager';
 
 interface NodeVertex {
   x: number;
   y: number;
   size: number;
   color: [number, number, number, number]; // RGBA
+  shape: 'circle' | 'rectangle' | 'diamond' | 'hexagon' | 'star' | 'roundrect' | 'window';
+  strokeWidth: number;
+  strokeColor: [number, number, number, number]; // RGBA
+  textureId?: string; // Reference to texture in texture manager
+  hasTexture?: boolean; // Whether node uses texture rendering
 }
 
 interface EdgeVertex {
@@ -16,11 +23,15 @@ interface EdgeVertex {
   y2: number;
   color: [number, number, number, number]; // RGBA
   width: number;
+  sourceId: string | number;
+  targetId: string | number;
   curvature?: number;
   parallelOffset?: number;
   isSelfLoop?: boolean;
   selfLoopAngle?: number;
   selfLoopRadius?: number;
+  arrow?: 'none' | 'forward' | 'backward' | 'both';
+  dashArray?: number[];
 }
 
 interface GlyphVertex {
@@ -42,6 +53,7 @@ export class WebGLRenderer implements IRenderer {
   private labelCanvas: HTMLCanvasElement;
   private gl: WebGLRenderingContext | WebGL2RenderingContext;
   private labelCtx: CanvasRenderingContext2D;
+  private textureManager: WebGLTextureManager;
   private nodes: Map<string | number, NodeVertex>;
   private edges: Map<string | number, EdgeVertex>;
   private glyphs: Map<string | number, GlyphVertex[]>; // Edge ID -> glyphs on that edge
@@ -58,6 +70,7 @@ export class WebGLRenderer implements IRenderer {
   
   // WebGL resources
   private nodeProgram: WebGLProgram | null;
+  private textureProgram: WebGLProgram | null; // Separate program for textured nodes
   private edgeProgram: WebGLProgram | null;
   private nodeBuffer: WebGLBuffer | null;
   private edgeBuffer: WebGLBuffer | null;
@@ -157,8 +170,12 @@ export class WebGLRenderer implements IRenderer {
     this.container.appendChild(this.canvas);
     this.container.appendChild(this.labelCanvas);
     
+    // Initialize texture manager
+    this.textureManager = new WebGLTextureManager(this.gl);
+    
     // Initialize programs
     this.nodeProgram = null;
+    this.textureProgram = null;
     this.edgeProgram = null;
     this.nodeBuffer = null;
     this.edgeBuffer = null;
@@ -210,27 +227,29 @@ export class WebGLRenderer implements IRenderer {
   private initShaders(): void {
     const gl = this.gl;
     
-    // Node shader program (draws circles as point sprites)
+    // Node shader program (draws shapes as triangle geometry)
     const nodeVertexShader = `
       attribute vec2 a_position;
-      attribute float a_size;
       attribute vec4 a_color;
       
       uniform vec2 u_resolution;
       uniform vec3 u_transform; // x, y, scale
+      uniform vec2 u_nodeCenter; // Center position of current node
+      uniform float u_nodeSize;  // Size of current node
       
       varying vec4 v_color;
       
       void main() {
-        // Apply transform
-        vec2 transformed = (a_position + u_transform.xy) * u_transform.z;
+        // Transform vertex relative to node center
+        vec2 vertexPos = a_position * u_nodeSize + u_nodeCenter;
+        
+        // Apply global transform
+        vec2 transformed = (vertexPos + u_transform.xy) * u_transform.z;
         
         // Convert to clip space
         vec2 clipSpace = (transformed / u_resolution) * 2.0 - 1.0;
         gl_Position = vec4(clipSpace * vec2(1, -1), 0, 1);
         
-        // Point size
-        gl_PointSize = a_size * u_transform.z;
         v_color = a_color;
       }
     `;
@@ -240,16 +259,66 @@ export class WebGLRenderer implements IRenderer {
       varying vec4 v_color;
       
       void main() {
-        // Draw circle
-        vec2 coord = gl_PointCoord - vec2(0.5);
-        if (length(coord) > 0.5) {
-          discard;
-        }
         gl_FragColor = v_color;
       }
     `;
     
     this.nodeProgram = this.createProgram(nodeVertexShader, nodeFragmentShader);
+    
+    // Texture shader program (draws textured nodes)
+    const textureVertexShader = `
+      attribute vec2 a_position;
+      attribute vec2 a_texCoord;
+      
+      uniform vec2 u_resolution;
+      uniform vec3 u_transform; // x, y, scale
+      uniform vec2 u_nodeCenter;
+      uniform float u_nodeSize;
+      
+      varying vec2 v_texCoord;
+      
+      void main() {
+        // Transform vertex relative to node center
+        vec2 vertexPos = a_position * u_nodeSize + u_nodeCenter;
+        
+        // Apply global transform (scale first, then translate)
+        vec2 transformed = vertexPos * u_transform.z + u_transform.xy;
+        
+        // Convert to clip space
+        vec2 clipSpace = (transformed / u_resolution) * 2.0 - 1.0;
+        gl_Position = vec4(clipSpace * vec2(1, -1), 0, 1);
+        
+        v_texCoord = a_texCoord;
+      }
+    `;
+    
+    const textureFragmentShader = `
+      precision mediump float;
+      varying vec2 v_texCoord;
+      uniform sampler2D u_texture;
+      uniform vec4 u_bgColor; // Background circle color
+      
+      void main() {
+        // Draw circle background
+        vec2 coord = v_texCoord * 2.0 - 1.0;
+        float dist = length(coord);
+        
+        if (dist > 1.0) {
+          discard; // Outside circle
+        }
+        
+        // Sample texture
+        vec4 texColor = texture2D(u_texture, v_texCoord);
+        
+        // Blend texture over background color
+        vec3 finalColor = mix(u_bgColor.rgb, texColor.rgb, texColor.a);
+        float finalAlpha = max(u_bgColor.a, texColor.a);
+        
+        gl_FragColor = vec4(finalColor, finalAlpha);
+      }
+    `;
+    
+    this.textureProgram = this.createProgram(textureVertexShader, textureFragmentShader);
     
     // Edge shader program (draws lines)
     const edgeVertexShader = `
@@ -262,8 +331,8 @@ export class WebGLRenderer implements IRenderer {
       varying vec4 v_color;
       
       void main() {
-        // Apply transform
-        vec2 transformed = (a_position + u_transform.xy) * u_transform.z;
+        // Apply transform (scale first, then translate)
+        vec2 transformed = a_position * u_transform.z + u_transform.xy;
         
         // Convert to clip space
         vec2 clipSpace = (transformed / u_resolution) * 2.0 - 1.0;
@@ -327,6 +396,8 @@ export class WebGLRenderer implements IRenderer {
       return;
     }
     
+    console.log('[WebGLRenderer] Rendering frame:', { nodes: this.nodes.size, edges: this.edges.size, needsRebuild: this.needsRebuild });
+    
     const gl = this.gl;
     gl.clear(gl.COLOR_BUFFER_BIT);
     
@@ -348,7 +419,12 @@ export class WebGLRenderer implements IRenderer {
   }
 
   private drawEdges(): void {
-    if (this.edges.size === 0 || !this.edgeProgram) return;
+    if (this.edges.size === 0 || !this.edgeProgram) {
+      if (this.edges.size === 0) {
+        console.log('[WebGLRenderer] No edges to draw');
+      }
+      return;
+    }
     
     const gl = this.gl;
     const program = this.edgeProgram;
@@ -383,33 +459,106 @@ export class WebGLRenderer implements IRenderer {
       edgesToRender = this.edges;
     }
     
+    console.log(`[WebGLRenderer] Rendering ${edgesToRender.size} edges out of ${this.edges.size} total`);
+    
     // Build vertex data - use line segments for curved edges
     const vertices: number[] = [];
     
-    edgesToRender.forEach((edge) => {
-      const [r, g, b, a] = edge.color;
+    edgesToRender.forEach((edgeVertex, edgeId) => {
+      const [r, g, b, a] = edgeVertex.color;
+      
+      // Get source and target IDs from the edge vertex
+      const sourceId = edgeVertex.sourceId;
+      const targetId = edgeVertex.targetId;
+      
+      const sourceNode = this.nodes.get(sourceId);
+      const targetNode = this.nodes.get(targetId);
+      
+      if (!sourceNode || !targetNode) {
+        console.warn(`[WebGLRenderer] Edge ${edgeId} missing nodes:`, { sourceId, targetId, hasSource: !!sourceNode, hasTarget: !!targetNode });
+        return;
+      }
+      
+      // Use current node positions instead of stale edge positions
+      const x1 = sourceNode.x;
+      const y1 = sourceNode.y;
+      const x2 = targetNode.x;
+      const y2 = targetNode.y;
+      
+      // DEBUG: Log first edge positions
+      if (vertices.length === 0) {
+        console.log('[WebGLRenderer] First edge positions:', {
+          edgeId,
+          source: { id: sourceId, x: x1, y: y1 },
+          target: { id: targetId, x: x2, y: y2 },
+          transform: this.transform
+        });
+      }
+      
+      // Calculate attachment points based on node shapes using current positions
+      const sourceRadius = sourceNode.size / 2;
+      
+      const sourceAttachment = WebGLShapeRenderer.calculateEdgeAttachmentPoint(
+        x1,
+        y1,
+        sourceNode.size,
+        sourceNode.shape,
+        x2,
+        y2
+      );
+      
+      const targetAttachment = WebGLShapeRenderer.calculateEdgeAttachmentPoint(
+        x2,
+        y2,
+        targetNode.size,
+        targetNode.shape,
+        x1,
+        y1
+      );
+      
+      // Adjust edge endpoints to attachment points using current positions
+      const adjustedX1 = x1 + sourceAttachment.x;
+      const adjustedY1 = y1 + sourceAttachment.y;
+      const adjustedX2 = x2 + targetAttachment.x;
+      const adjustedY2 = y2 + targetAttachment.y;
       
       // At very far zoom, always draw straight lines (massive performance boost)
-      if (collapseBundles || edge.isSelfLoop && this.transform.scale < 0.2) {
+      if (collapseBundles || edgeVertex.isSelfLoop && this.transform.scale < 0.2) {
         // Skip self-loops at very far zoom (they're tiny anyway)
-        if (!edge.isSelfLoop) {
-          vertices.push(edge.x1, edge.y1, r, g, b, a);
-          vertices.push(edge.x2, edge.y2, r, g, b, a);
+        if (!edgeVertex.isSelfLoop) {
+          vertices.push(adjustedX1, adjustedY1, r, g, b, a);
+          vertices.push(adjustedX2, adjustedY2, r, g, b, a);
         }
-      } else if (edge.isSelfLoop) {
+      } else if (edgeVertex.isSelfLoop) {
         // Draw self-loop as segmented curve
-        this.addSelfLoopVertices(vertices, edge, r, g, b, a);
-      } else if (edge.curvature !== 0 || edge.parallelOffset !== 0) {
-        // Draw curved edge as segmented line
-        this.addCurvedEdgeVertices(vertices, edge, r, g, b, a);
+        // Map 'window' shape to 'roundrect'
+        const renderShape = sourceNode.shape === 'window' ? 'roundrect' : sourceNode.shape;
+        this.addSelfLoopVertices(vertices, edgeVertex, r, g, b, a, renderShape as any, sourceRadius);
+      } else if (edgeVertex.curvature !== 0 || edgeVertex.parallelOffset !== 0) {
+        // Draw curved edge as segmented line (with adjusted endpoints)
+        this.addCurvedEdgeVertices(vertices, edgeVertex, r, g, b, a, 
+          adjustedX1, adjustedY1, adjustedX2, adjustedY2);
       } else {
         // Straight line (2 vertices)
-        vertices.push(edge.x1, edge.y1, r, g, b, a);
-        vertices.push(edge.x2, edge.y2, r, g, b, a);
+        vertices.push(adjustedX1, adjustedY1, r, g, b, a);
+        vertices.push(adjustedX2, adjustedY2, r, g, b, a);
       }
     });
     
     const vertexData = new Float32Array(vertices);
+    const vertexCount = vertices.length / 6;
+    
+    console.log(`[WebGLRenderer] Drawing edges:`, { 
+      vertexFloats: vertices.length, 
+      vertexCount, 
+      edgesRendered: edgesToRender.size,
+      firstVertex: vertices.length > 0 ? vertices.slice(0, 6) : 'EMPTY'
+    });
+    
+    if (vertices.length === 0) {
+      console.warn('[WebGLRenderer] No edge vertices to render!');
+      return;
+    }
     
     // Upload to buffer
     gl.bindBuffer(gl.ARRAY_BUFFER, this.edgeBuffer);
@@ -419,6 +568,13 @@ export class WebGLRenderer implements IRenderer {
     const positionLoc = gl.getAttribLocation(program, 'a_position');
     const colorLoc = gl.getAttribLocation(program, 'a_color');
     
+    console.log(`[WebGLRenderer] Attribute locations:`, { positionLoc, colorLoc });
+    
+    if (positionLoc === -1 || colorLoc === -1) {
+      console.error('[WebGLRenderer] Failed to get attribute locations!');
+      return;
+    }
+    
     const stride = 6 * Float32Array.BYTES_PER_ELEMENT;
     
     gl.enableVertexAttribArray(positionLoc);
@@ -427,9 +583,12 @@ export class WebGLRenderer implements IRenderer {
     gl.enableVertexAttribArray(colorLoc);
     gl.vertexAttribPointer(colorLoc, 4, gl.FLOAT, false, stride, 2 * Float32Array.BYTES_PER_ELEMENT);
     
-    // Draw lines
-    gl.lineWidth(1.0);
-    gl.drawArrays(gl.LINES, 0, vertices.length / 6);
+    // Draw lines with appropriate width (note: WebGL lineWidth support is limited, may need to use triangles for thick lines)
+    const lineWidth = Math.max(1.0, 2.0 * this.transform.scale); // Scale line width with zoom
+    gl.lineWidth(lineWidth);
+    
+    console.log(`[WebGLRenderer] Drawing ${vertexCount} vertices as ${vertexCount/2} line segments with lineWidth=${lineWidth}`);
+    gl.drawArrays(gl.LINES, 0, vertexCount);
   }
 
   private addCurvedEdgeVertices(
@@ -438,17 +597,21 @@ export class WebGLRenderer implements IRenderer {
     r: number,
     g: number,
     b: number,
-    a: number
+    a: number,
+    startX: number,
+    startY: number,
+    endX: number,
+    endY: number
   ): void {
     // Quadratic bezier curve approximation with line segments
     const segments = 16; // Number of line segments
-    const { x1, y1, x2, y2, curvature, parallelOffset } = edge;
+    const { curvature, parallelOffset } = edge;
     
-    const dx = x2 - x1;
-    const dy = y2 - y1;
+    const dx = endX - startX;
+    const dy = endY - startY;
     const distance = Math.sqrt(dx * dx + dy * dy);
-    const midX = (x1 + x2) / 2;
-    const midY = (y1 + y2) / 2;
+    const midX = (startX + endX) / 2;
+    const midY = (startY + endY) / 2;
     
     // Perpendicular offset for multi-edges
     const perpX = distance > 0 ? -dy / distance : 0;
@@ -463,8 +626,8 @@ export class WebGLRenderer implements IRenderer {
       const t1 = i / segments;
       const t2 = (i + 1) / segments;
       
-      const p1 = this.getQuadraticBezierPoint(x1, y1, controlX, controlY, x2, y2, t1);
-      const p2 = this.getQuadraticBezierPoint(x1, y1, controlX, controlY, x2, y2, t2);
+      const p1 = this.getQuadraticBezierPoint(startX, startY, controlX, controlY, endX, endY, t1);
+      const p2 = this.getQuadraticBezierPoint(startX, startY, controlX, controlY, endX, endY, t2);
       
       vertices.push(p1.x, p1.y, r, g, b, a);
       vertices.push(p2.x, p2.y, r, g, b, a);
@@ -477,30 +640,47 @@ export class WebGLRenderer implements IRenderer {
     r: number,
     g: number,
     b: number,
-    a: number
+    a: number,
+    nodeShape: 'circle' | 'rectangle' | 'diamond' | 'hexagon' | 'star' | 'roundrect',
+    nodeRadius: number
   ): void {
     // Draw self-loop as segmented curve
     const segments = 20;
     const { x1, y1, selfLoopAngle = 45, selfLoopRadius = 100 } = edge;
     
     const angle = (selfLoopAngle * Math.PI) / 180;
-    const nodeRadius = 30; // Should match node size
     
-    // Attachment spread
-    const attachmentSpread = Math.PI / 6;
-    const startAngle = angle - attachmentSpread;
-    const endAngle = angle + attachmentSpread;
+    // Calculate attachment points based on node shape
+    const tempControlX = x1 + (nodeRadius + selfLoopRadius * 2) * Math.cos(angle);
+    const tempControlY = y1 + (nodeRadius + selfLoopRadius * 2) * Math.sin(angle);
     
-    // Start and end points on node perimeter (assume circle for now)
-    const startX = x1 + nodeRadius * Math.cos(startAngle);
-    const startY = y1 + nodeRadius * Math.sin(startAngle);
-    const endX = x1 + nodeRadius * Math.cos(endAngle);
-    const endY = y1 + nodeRadius * Math.sin(endAngle);
+    const startAttachment = WebGLShapeRenderer.calculateEdgeAttachmentPoint(
+      x1,
+      y1,
+      nodeRadius * 2,
+      nodeShape,
+      tempControlX,
+      tempControlY
+    );
+    const endAttachment = WebGLShapeRenderer.calculateEdgeAttachmentPoint(
+      x1,
+      y1,
+      nodeRadius * 2,
+      nodeShape,
+      tempControlX,
+      tempControlY
+    );
+    
+    // Start and end points on node perimeter
+    const startX = x1 + startAttachment.x;
+    const startY = y1 + startAttachment.y;
+    const endX = x1 + endAttachment.x;
+    const endY = y1 + endAttachment.y;
     
     // Control point for loop
-    const controlDistance = nodeRadius + selfLoopRadius * 2;
-    const controlX = x1 + controlDistance * Math.cos(angle);
-    const controlY = y1 + controlDistance * Math.sin(angle);
+    const controlDistance2 = nodeRadius + selfLoopRadius * 2;
+    const controlX = x1 + controlDistance2 * Math.cos(angle);
+    const controlY = y1 + controlDistance2 * Math.sin(angle);
     
     // Generate line segments
     for (let i = 0; i < segments; i++) {
@@ -532,16 +712,44 @@ export class WebGLRenderer implements IRenderer {
   }
 
   private drawNodes(): void {
-    if (this.nodes.size === 0 || !this.nodeProgram) return;
+    if (this.nodes.size === 0) return;
+    
+    // Separate textured and non-textured nodes
+    const texturedNodes: Array<[string | number, NodeVertex]> = [];
+    const regularNodes: Array<[string | number, NodeVertex]> = [];
+    
+    this.nodes.forEach((node, id) => {
+      if (node.hasTexture && node.textureId) {
+        texturedNodes.push([id, node]);
+      } else {
+        regularNodes.push([id, node]);
+      }
+    });
+    
+    // Draw regular nodes
+    if (regularNodes.length > 0) {
+      this.drawRegularNodes(new Map(regularNodes));
+    }
+    
+    // Draw textured nodes
+    if (texturedNodes.length > 0) {
+      this.drawTexturedNodes(new Map(texturedNodes));
+    }
+  }
+  
+  private drawRegularNodes(nodes: Map<string | number, NodeVertex>): void {
+    if (nodes.size === 0 || !this.nodeProgram) return;
     
     const gl = this.gl;
     const program = this.nodeProgram;
     
     gl.useProgram(program);
     
-    // Set uniforms
+    // Set global uniforms
     const resolutionLoc = gl.getUniformLocation(program, 'u_resolution');
     const transformLoc = gl.getUniformLocation(program, 'u_transform');
+    const nodeCenterLoc = gl.getUniformLocation(program, 'u_nodeCenter');
+    const nodeSizeLoc = gl.getUniformLocation(program, 'u_nodeSize');
     
     gl.uniform2f(resolutionLoc, this.width, this.height);
     gl.uniform3f(transformLoc, this.transform.x, this.transform.y, this.transform.scale);
@@ -552,84 +760,241 @@ export class WebGLRenderer implements IRenderer {
     // Viewport culling for large graphs
     let nodesToRender: Map<string | number, NodeVertex>;
     
-    if (this.enableViewportCulling && this.graph && this.nodes.size > 500) {
+    if (this.enableViewportCulling && this.graph && nodes.size > 500) {
       const viewportBounds = this.getViewportBounds();
       const visibleNodes = this.graph.getNodesInBounds(viewportBounds);
       
       nodesToRender = new Map();
       visibleNodes.forEach(node => {
-        const vertex = this.nodes.get(node.id);
+        const vertex = nodes.get(node.id);
         if (vertex) {
           nodesToRender.set(node.id, vertex);
         }
       });
     } else {
-      nodesToRender = this.nodes;
+      nodesToRender = nodes;
     }
     
-    // Build vertex data
-    const vertices: number[] = [];
+    // Group nodes by shape for efficient batching
+    const nodesByShape = new Map<string, NodeVertex[]>();
     nodesToRender.forEach((node) => {
-      // Vertex format: x, y, size, r, g, b, a
-      const [r, g, b, a] = node.color;
-      
-      // At very far zoom, reduce node size to save rendering time
-      let size = node.size;
-      if (simplifyNodes) {
-        size = Math.max(3, size * 0.5); // Minimum 3px diameter
+      const shapeKey = simplifyNodes ? 'circle' : node.shape;
+      if (!nodesByShape.has(shapeKey)) {
+        nodesByShape.set(shapeKey, []);
       }
-      
-      vertices.push(node.x, node.y, size, r, g, b, a);
+      nodesByShape.get(shapeKey)!.push(node);
     });
     
-    const vertexData = new Float32Array(vertices);
-    
-    // Upload to buffer
-    gl.bindBuffer(gl.ARRAY_BUFFER, this.nodeBuffer);
-    gl.bufferData(gl.ARRAY_BUFFER, vertexData, gl.DYNAMIC_DRAW);
-    
-    // Setup attributes
+    // Get attribute locations
     const positionLoc = gl.getAttribLocation(program, 'a_position');
-    const sizeLoc = gl.getAttribLocation(program, 'a_size');
     const colorLoc = gl.getAttribLocation(program, 'a_color');
     
-    const stride = 7 * Float32Array.BYTES_PER_ELEMENT;
-    
-    gl.enableVertexAttribArray(positionLoc);
-    gl.vertexAttribPointer(positionLoc, 2, gl.FLOAT, false, stride, 0);
-    
-    gl.enableVertexAttribArray(sizeLoc);
-    gl.vertexAttribPointer(sizeLoc, 1, gl.FLOAT, false, stride, 2 * Float32Array.BYTES_PER_ELEMENT);
-    
-    gl.enableVertexAttribArray(colorLoc);
-    gl.vertexAttribPointer(colorLoc, 4, gl.FLOAT, false, stride, 3 * Float32Array.BYTES_PER_ELEMENT);
-    
-    // Draw points
-    gl.drawArrays(gl.POINTS, 0, vertices.length / 7);
+    // Render each shape type as a batch
+    nodesByShape.forEach((nodes, shape) => {
+      // Map 'window' shape to 'roundrect' for rendering (window mode will be implemented later)
+      const renderShape = shape === 'window' ? 'roundrect' : shape;
+      
+      // Generate geometry for this shape type (only once per shape)
+      const geometry = WebGLShapeRenderer.generateShapeGeometry(
+        renderShape as any,
+        1.0, // Base radius (we'll scale per node)
+        0    // No stroke at LOD (add later)
+      );
+      
+      if (!geometry || geometry.vertices.length === 0) return;
+      
+      // Upload geometry to buffers
+      gl.bindBuffer(gl.ARRAY_BUFFER, this.nodeBuffer);
+      gl.bufferData(gl.ARRAY_BUFFER, geometry.vertices, gl.STATIC_DRAW);
+      
+      const indexBuffer = gl.createBuffer();
+      gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, indexBuffer);
+      gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, geometry.indices, gl.STATIC_DRAW);
+      
+      // Setup vertex attributes for geometry
+      gl.enableVertexAttribArray(positionLoc);
+      gl.vertexAttribPointer(positionLoc, 2, gl.FLOAT, false, 6 * Float32Array.BYTES_PER_ELEMENT, 0);
+      
+      gl.enableVertexAttribArray(colorLoc);
+      gl.vertexAttribPointer(colorLoc, 4, gl.FLOAT, false, 6 * Float32Array.BYTES_PER_ELEMENT, 2 * Float32Array.BYTES_PER_ELEMENT);
+      
+      // Draw each node of this shape type
+      nodes.forEach((node) => {
+        // Set per-node uniforms
+        gl.uniform2f(nodeCenterLoc, node.x, node.y);
+        
+        let size = node.size;
+        if (simplifyNodes) {
+          size = Math.max(3, size * 0.5); // Minimum 3px diameter
+        }
+        gl.uniform1f(nodeSizeLoc, size);
+        
+        // Update colors in the geometry (inefficient, but works for now)
+        // TODO: Use instancing for better performance
+        const coloredVertices = new Float32Array(geometry.vertices);
+        for (let i = 0; i < geometry.vertices.length; i += 6) {
+          coloredVertices[i + 2] = node.color[0];
+          coloredVertices[i + 3] = node.color[1];
+          coloredVertices[i + 4] = node.color[2];
+          coloredVertices[i + 5] = node.color[3];
+        }
+        
+        gl.bindBuffer(gl.ARRAY_BUFFER, this.nodeBuffer);
+        gl.bufferData(gl.ARRAY_BUFFER, coloredVertices, gl.STATIC_DRAW);
+        
+        // Draw this node
+        gl.drawElements(gl.TRIANGLES, geometry.indices.length, gl.UNSIGNED_SHORT, 0);
+      });
+      
+      // Cleanup index buffer
+      if (indexBuffer) {
+        gl.deleteBuffer(indexBuffer);
+      }
+    });
   }
 
   addNode(node: GraphNode, style: NodeStyle): void {
     const color = this.parseColor(style.fill || '#3498db');
-    this.nodes.set(node.id, {
+    const strokeColor = this.parseColor(style.stroke || '#2c3e50');
+    
+    const nodeVertex: NodeVertex = {
       x: (node as any).x || 0,
       y: (node as any).y || 0,
       size: (style.radius || 30) * 2, // Diameter
-      color
-    });
+      color,
+      shape: style.shape || 'circle',
+      strokeWidth: style.strokeWidth || 0,
+      strokeColor,
+      hasTexture: !!style.image,
+      textureId: undefined
+    };
+    
+    // Load texture if image config is provided
+    if (style.image) {
+      this.loadNodeTexture(node.id, style.image);
+    }
+    
+    this.nodes.set(node.id, nodeVertex);
     this.nodeStyles.set(node.id, style);
     this.needsRebuild = true;
     this.metrics.nodeCount = this.nodes.size;
+  }
+  
+  /**
+   * Async load texture for a node
+   */
+  private async loadNodeTexture(nodeId: string | number, imageConfig: NonNullable<NodeStyle['image']>): Promise<void> {
+    try {
+      const textureInfo = await this.textureManager.loadTexture(imageConfig);
+      const nodeVertex = this.nodes.get(nodeId);
+      if (nodeVertex) {
+        nodeVertex.textureId = this.textureManager['getCacheKey'](imageConfig);
+        nodeVertex.hasTexture = true;
+        this.needsRebuild = true;
+      }
+    } catch (error) {
+      console.error(`Failed to load texture for node ${nodeId}:`, error);
+    }
+  }
+  
+  /**
+   * Draw nodes with textures (SVG, PNG, font icons)
+   */
+  private drawTexturedNodes(nodes: Map<string | number, NodeVertex>): void {
+    if (nodes.size === 0 || !this.textureProgram) return;
+    
+    const gl = this.gl;
+    const program = this.textureProgram;
+    
+    gl.useProgram(program);
+    
+    // Set global uniforms
+    const resolutionLoc = gl.getUniformLocation(program, 'u_resolution');
+    const transformLoc = gl.getUniformLocation(program, 'u_transform');
+    const nodeCenterLoc = gl.getUniformLocation(program, 'u_nodeCenter');
+    const nodeSizeLoc = gl.getUniformLocation(program, 'u_nodeSize');
+    const textureLoc = gl.getUniformLocation(program, 'u_texture');
+    const bgColorLoc = gl.getUniformLocation(program, 'u_bgColor');
+    
+    gl.uniform2f(resolutionLoc, this.width, this.height);
+    gl.uniform3f(transformLoc, this.transform.x, this.transform.y, this.transform.scale);
+    gl.uniform1i(textureLoc, 0); // Texture unit 0
+    
+    // Create a quad for texture rendering
+    const quad = new Float32Array([
+      // Position (x, y), TexCoord (u, v)
+      -1.0, -1.0,  0.0, 1.0,
+       1.0, -1.0,  1.0, 1.0,
+      -1.0,  1.0,  0.0, 0.0,
+       1.0,  1.0,  1.0, 0.0,
+    ]);
+    
+    const quadBuffer = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, quadBuffer);
+    gl.bufferData(gl.ARRAY_BUFFER, quad, gl.STATIC_DRAW);
+    
+    const positionLoc = gl.getAttribLocation(program, 'a_position');
+    const texCoordLoc = gl.getAttribLocation(program, 'a_texCoord');
+    
+    gl.enableVertexAttribArray(positionLoc);
+    gl.vertexAttribPointer(positionLoc, 2, gl.FLOAT, false, 4 * Float32Array.BYTES_PER_ELEMENT, 0);
+    
+    gl.enableVertexAttribArray(texCoordLoc);
+    gl.vertexAttribPointer(texCoordLoc, 2, gl.FLOAT, false, 4 * Float32Array.BYTES_PER_ELEMENT, 2 * Float32Array.BYTES_PER_ELEMENT);
+    
+    // Draw each textured node
+    nodes.forEach((node) => {
+      if (!node.textureId) return;
+      
+      const textureInfo = this.textureManager['textureCache'].get(node.textureId);
+      if (!textureInfo || !textureInfo.ready) return;
+      
+      // Bind texture
+      gl.activeTexture(gl.TEXTURE0);
+      gl.bindTexture(gl.TEXTURE_2D, textureInfo.texture);
+      
+      // Set node uniforms
+      gl.uniform2f(nodeCenterLoc, node.x, node.y);
+      gl.uniform1f(nodeSizeLoc, node.size * 0.5); // Half size for radius
+      gl.uniform4fv(bgColorLoc, node.color);
+      
+      // Draw quad
+      gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+    });
+    
+    // Cleanup
+    if (quadBuffer) {
+      gl.deleteBuffer(quadBuffer);
+    }
   }
 
   updateNode(id: string | number, updates: Partial<GraphNode>, style?: NodeStyle): void {
     const existing = this.nodes.get(id);
     if (existing) {
+      const oldX = existing.x;
+      const oldY = existing.y;
+      
       existing.x = (updates as any).x || existing.x;
       existing.y = (updates as any).y || existing.y;
       if (style) {
         existing.size = (style.radius || 30) * 2;
         existing.color = this.parseColor(style.fill || '#3498db');
       }
+      
+      // Update all edges connected to this node if position changed
+      if ((updates as any).x !== undefined || (updates as any).y !== undefined) {
+        this.edges.forEach((edgeVertex, edgeId) => {
+          if (edgeVertex.sourceId === id) {
+            edgeVertex.x1 = existing.x;
+            edgeVertex.y1 = existing.y;
+          }
+          if (edgeVertex.targetId === id) {
+            edgeVertex.x2 = existing.x;
+            edgeVertex.y2 = existing.y;
+          }
+        });
+      }
+      
       this.needsRebuild = true;
     }
   }
@@ -647,7 +1012,10 @@ export class WebGLRenderer implements IRenderer {
     const sourceNode = this.nodes.get(sourceId);
     const targetNode = this.nodes.get(targetId);
     
-    if (!sourceNode || !targetNode) return;
+    if (!sourceNode || !targetNode) {
+      console.warn('[WebGLRenderer] Cannot add edge - missing nodes:', { edgeId: edge.id, sourceId, targetId, hasSource: !!sourceNode, hasTarget: !!targetNode });
+      return;
+    }
     
     // Get bundle info for curvature and self-loop positioning
     const bundleInfo = this.graph?.getEdgeBundleInfo(edge.id);
@@ -664,6 +1032,8 @@ export class WebGLRenderer implements IRenderer {
       y2: targetNode.y,
       color,
       width: style.strokeWidth || 1,
+      sourceId,
+      targetId,
       curvature,
       parallelOffset,
       isSelfLoop,
@@ -697,6 +1067,7 @@ export class WebGLRenderer implements IRenderer {
     this.edgeStyles.set(edge.id, style);
     this.needsRebuild = true;
     this.metrics.edgeCount = this.edges.size;
+    console.log('[WebGLRenderer] Edge added:', { edgeId: edge.id, totalEdges: this.edges.size, sourceId, targetId });
   }
 
   updateEdge(id: string | number, updates: Partial<GraphEdge>, style?: EdgeStyle): void {
@@ -759,13 +1130,17 @@ export class WebGLRenderer implements IRenderer {
     }
     
     const color = this.parseColor(style.fill || '#9C27B0');
+    const strokeColor = this.parseColor(style.stroke || '#2c3e50');
     this.associationClasses.set(ac.id, {
       ac,
       nodeVertex: {
         x,
         y,
         size: (style.radius || 30) * 2,
-        color
+        color,
+        shape: style.shape || 'circle',
+        strokeWidth: style.strokeWidth || 0,
+        strokeColor
       }
     });
     
@@ -892,8 +1267,8 @@ export class WebGLRenderer implements IRenderer {
     const ctx = this.labelCtx;
     const { x: tx, y: ty, scale } = this.transform;
     
-    // Clear label canvas
-    ctx.clearRect(0, 0, this.width, this.height);
+    // Clear label canvas with current transform
+    ctx.clearRect(0, 0, this.labelCanvas.width, this.labelCanvas.height);
     
     // LOD: Skip expensive label rendering at far zoom
     const skipLabels = scale < this.lodThresholds.hideLabels;
@@ -934,7 +1309,7 @@ export class WebGLRenderer implements IRenderer {
       const screenY = nodeVertex.y * scale + ty;
       
       ctx.save();
-      const fontSize = label.fontSize || 12;
+      const fontSize = (label.fontSize || 12) * scale; // Scale font size with zoom
       ctx.font = `${fontSize}px ${label.fontFamily || 'Arial'}`;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
@@ -942,9 +1317,9 @@ export class WebGLRenderer implements IRenderer {
       // Position label based on style
       let offsetY = 0;
       if (label.position === 'bottom') {
-        offsetY = (style.radius || 30) * scale + 15;
+        offsetY = (style.radius || 30) * scale + 15 * scale; // Scale offset too
       } else if (label.position === 'top') {
-        offsetY = -(style.radius || 30) * scale - 15;
+        offsetY = -(style.radius || 30) * scale - 15 * scale; // Scale offset too
       }
       
       // Split text into lines for multi-line support

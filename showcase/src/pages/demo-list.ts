@@ -22,37 +22,49 @@ export const demos: Demo[] = [
   {
     id: 'tree-layout',
     title: 'Tree Layout',
-    description: 'Reingold-Tilford algorithm for tidy tree visualization',
+    description: 'Reingold-Tilford algorithm for tidy trees - file system example',
     category: 'Layouts',
   },
   {
     id: 'radial-tree',
     title: 'Radial Tree Layout',
-    description: 'Circular tree layout with concentric layers',
+    description: 'Circular tree layout with concentric layers - company structure',
     category: 'Layouts',
   },
   {
     id: 'circular-layout',
     title: 'Circular Layouts',
-    description: 'Simple, hierarchical, and bipartite circular arrangements',
+    description: 'Simple, hierarchical, and bipartite circular arrangements - social network',
     category: 'Layouts',
   },
   {
     id: 'organic-layout',
     title: 'Organic Layout',
-    description: 'Barnes-Hut optimized force-directed layout for large graphs',
+    description: 'Barnes-Hut optimized force-directed layout - collaboration network',
     category: 'Layouts',
   },
   {
     id: 'edge-bundling',
     title: 'Edge Bundling',
-    description: 'Reduce visual clutter with hierarchical and force-directed bundling',
+    description: 'Hierarchical and FDEB algorithms - network topology',
     category: 'Advanced',
   },
   {
     id: 'compound-graphs',
     title: 'Compound Graphs',
-    description: 'Hierarchical grouping with collapsible nodes',
+    description: 'Hierarchical grouping with collapsible nodes - microservices',
+    category: 'Advanced',
+  },
+  {
+    id: 'ui-components',
+    title: 'UI Components',
+    description: 'Interactive toolbar, legend, minimap, inspector, and context menu',
+    category: 'Advanced',
+  },
+  {
+    id: 'styling-showcase',
+    title: 'Styling Showcase',
+    description: 'Node shapes, colors, borders, icons, multi-line labels, and window nodes',
     category: 'Advanced',
   },
   {
@@ -68,6 +80,12 @@ export const demos: Demo[] = [
     category: 'Use Cases',
   },
   {
+    id: 'rdf-advanced-styling',
+    title: 'RDF Advanced Styling',
+    description: 'OWL, SKOS, association classes with rich styling and property inspector',
+    category: 'Use Cases',
+  },
+  {
     id: 'social-network',
     title: 'Social Network',
     description: 'Community detection and influence analysis',
@@ -78,6 +96,18 @@ export const demos: Demo[] = [
     title: 'Dependency Graph',
     description: 'Software package dependencies with filtering',
     category: 'Use Cases',
+  },
+  {
+    id: 'time-series',
+    title: 'Time Series',
+    description: 'Temporal graph visualization with timeline animation and playback controls',
+    category: 'Advanced',
+  },
+  {
+    id: 'animated-adaptive',
+    title: 'Animated Adaptive Layout',
+    description: 'Smooth layout transitions with adaptive positioning that preserves existing nodes',
+    category: 'Advanced',
   },
 ];
 

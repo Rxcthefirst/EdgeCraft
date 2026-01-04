@@ -18,6 +18,8 @@ export { CompoundGraph } from './core/CompoundGraph';
 export type { GroupConfig, GroupBounds } from './core/CompoundGraph';
 export { EdgeBundling } from './core/EdgeBundling';
 export type { EdgeBundlingConfig, BundledEdge } from './core/EdgeBundling';
+export { TimeSeriesManager } from './core/TimeSeriesManager';
+export type { TimeSnapshot, TimeSeriesConfig, TimeSeriesState } from './core/TimeSeriesManager';
 export { GraphFilter, GraphSearch, PathFinder, NeighborhoodExplorer } from './core/GraphQuery';
 export type { 
   FilterOptions, SearchOptions, SearchResult, 
@@ -30,6 +32,10 @@ export { OrganicLayout } from './layout/OrganicLayout';
 export { RadialTreeLayout } from './layout/RadialTreeLayout';
 export { CircularLayout } from './layout/CircularLayout';
 export { GeometricLayout } from './layout/GeometricLayout';
+export { LayoutAnimator } from './layout/LayoutAnimator';
+export type { AnimationConfig, NodeTransition } from './layout/LayoutAnimator';
+export { AdaptiveLayout } from './layout/AdaptiveLayout';
+export type { AdaptiveLayoutConfig } from './layout/AdaptiveLayout';
 export type { LayoutProgressCallback } from './layout/WorkerForceLayout';
 export type { HierarchicalConfig } from './layout/HierarchicalLayout';
 export type { TreeLayoutConfig } from './layout/TreeLayout';
@@ -39,6 +45,12 @@ export type { CircularLayoutConfig } from './layout/CircularLayout';
 export type { GeometricLayoutConfig } from './layout/GeometricLayout';
 export * from './core/BezierUtils';
 export * from './types';
+
+// UI Components
+export * from './ui';
+
+// Data Import/Export
+export * from './io';
 
 // Version
 export const VERSION = '0.1.0';

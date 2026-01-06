@@ -20,7 +20,7 @@
  */
 
 import { Graph } from './Graph';
-import { GraphNode, NodeId, Position } from '../types';
+import { NodeId } from '../types';
 
 export interface GroupConfig {
   /**
@@ -404,7 +404,7 @@ export class CompoundGraph {
   getRootGroups(): NodeId[] {
     const roots: NodeId[] = [];
 
-    this.groupHierarchy.forEach((children, groupId) => {
+    this.groupHierarchy.forEach((_children, groupId) => {
       if (!this.nodeParent.has(groupId)) {
         roots.push(groupId);
       }

@@ -97,7 +97,7 @@ export class AdaptiveLayout {
     newNodes: GraphNode[],
     edges: GraphEdge[],
     positions: Map<NodeId, Position>,
-    newNodeIds: Set<NodeId>,
+    _newNodeIds: Set<NodeId>,
     existingNodeIds: Set<NodeId>
   ): void {
     newNodes.forEach(node => {

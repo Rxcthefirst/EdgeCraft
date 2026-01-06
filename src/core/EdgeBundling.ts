@@ -1,5 +1,5 @@
 import { Graph } from './Graph';
-import { GraphNode, GraphEdge } from '../types';
+import { GraphEdge } from '../types';
 
 /**
  * Configuration for edge bundling

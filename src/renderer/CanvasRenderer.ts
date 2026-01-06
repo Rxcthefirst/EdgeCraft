@@ -337,6 +337,7 @@ export class CanvasRenderer implements IRenderer {
         break;
 
       case 'rectangle':
+      // @ts-ignore - 'square' is a legacy alias for rectangle
       case 'square':
         const rectSize = (style.radius || 30) * 1.5;
         ctx.fillRect(x - rectSize / 2, y - rectSize / 2, rectSize, rectSize);
@@ -352,6 +353,7 @@ export class CanvasRenderer implements IRenderer {
         }
         break;
 
+      // @ts-ignore - 'triangle' is a supported shape
       case 'triangle':
         const triSize = style.radius || 30;
         ctx.beginPath();
@@ -797,8 +799,6 @@ export class CanvasRenderer implements IRenderer {
     ctx.beginPath();
     ctx.moveTo(sx, sy);
     
-    let endX = tx;
-    let endY = ty;
     let controlX = 0;
     let controlY = 0;
     
@@ -818,8 +818,6 @@ export class CanvasRenderer implements IRenderer {
       controlY = midY + (dx * curvature) + (perpY * parallelOffset);
       
       ctx.quadraticCurveTo(controlX, controlY, tx, ty);
-      endX = tx;
-      endY = ty;
     }
     ctx.stroke();
 
@@ -907,7 +905,7 @@ export class CanvasRenderer implements IRenderer {
     endX: number,
     endY: number,
     controlPoint: { x: number; y: number } | null,
-    edgeId: string | number
+    _edgeId: string | number
   ): void {
     const t = glyph.position || 0.5;
     
@@ -987,7 +985,7 @@ export class CanvasRenderer implements IRenderer {
     ctx.restore();
   }
 
-  private drawArrow(
+  private _drawArrow(
     ctx: CanvasRenderingContext2D,
     fromX: number,
     fromY: number,
@@ -1284,7 +1282,7 @@ export class CanvasRenderer implements IRenderer {
   /**
    * Get tangent angle on cubic bezier curve at t (0 to 1)
    */
-  private getCubicBezierTangentAngle(
+  private _getCubicBezierTangentAngle(
     x0: number, y0: number,
     x1: number, y1: number,
     x2: number, y2: number,

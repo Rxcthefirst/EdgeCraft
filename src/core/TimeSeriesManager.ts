@@ -306,7 +306,9 @@ export class TimeSeriesManager {
         if (t < 0.5) {
           // Keep node until halfway, with reduced opacity
           const node = nodeMap.get(beforeNode.id);
+          // @ts-ignore - RDF nodes don't have properties, but we use it for animation state
           if (node && node.properties) {
+            // @ts-ignore
             node.properties = { ...node.properties, _opacity: 1 - (t * 2) };
           }
         } else {

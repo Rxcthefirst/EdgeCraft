@@ -5,15 +5,15 @@ import { WebGLRenderer } from './WebGLRenderer';
 /**
  * Factory for creating appropriate renderer based on configuration
  * 
- * Renderer Selection Strategy (Keylines-style):
- * - Default: WebGL (best performance, GPU-accelerated)
- * - Fallback: Canvas if WebGL not supported
- * - Explicit: Developer can force 'canvas' renderer if needed
+ * Renderer Selection Strategy:
+ * - Default: Canvas (stable, well-tested)
+ * - WebGL: Disabled for v1.0 (under development)
+ * - Explicit: Developer can explicitly request 'canvas' renderer
  * 
  * Usage:
- * - Auto (default): `renderer: { type: 'auto' }` or omit type
- * - Force WebGL: `renderer: { type: 'webgl' }` (falls back to Canvas if not supported)
+ * - Auto (default): `renderer: { type: 'auto' }` or omit type → uses Canvas
  * - Force Canvas: `renderer: { type: 'canvas' }`
+ * - WebGL: Not available in v1.0
  */
 export class RendererFactory {
   /**
@@ -30,13 +30,9 @@ export class RendererFactory {
       // Explicit Canvas choice - respect developer's preference
       type = 'canvas';
     } else if (config.type === 'webgl') {
-      // Explicit WebGL choice - try WebGL, fallback to Canvas if not supported
-      if (this.isSupported('webgl')) {
-        type = 'webgl';
-      } else {
-        console.warn('WebGL not supported in this environment. Falling back to Canvas renderer.');
-        type = 'canvas';
-      }
+      // WebGL disabled for v1.0 - fallback to Canvas
+      console.warn('WebGL renderer is not available in v1.0. Using Canvas renderer instead.');
+      type = 'canvas';
     } else {
       // Auto mode (default): Try WebGL first, fallback to Canvas
       type = this.autoDetect(nodeCount);
@@ -77,18 +73,12 @@ export class RendererFactory {
   }
 
   /**
-   * Auto-detect best renderer (Keylines-style behavior)
-   * Default: Always try WebGL first (best performance)
-   * Fallback: Canvas if WebGL not supported
+   * Auto-detect best renderer
+   * Default: Canvas (stable and well-tested for v1.0)
+   * Note: WebGL support will be added in a future release
    */
   private static autoDetect(_nodeCount: number): RendererType {
-    // Try WebGL first (like Keylines)
-    if (this.isSupported('webgl')) {
-      return 'webgl';
-    }
-    
-    // Fallback to Canvas if WebGL not supported
-    console.warn('WebGL not supported. Using Canvas renderer.');
+    // Use Canvas as default for v1.0
     return 'canvas';
   }
 
@@ -119,32 +109,24 @@ export class RendererFactory {
 
   /**
    * Get recommended renderer for current environment and graph size
-   * Follows Keylines pattern: WebGL preferred, Canvas fallback
+   * v1.0: Canvas is the recommended renderer (stable and well-tested)
    */
   static recommend(_nodeCount: number): {
     type: RendererType;
     reason: string;
   } {
-    // Always prefer WebGL for best performance (like Keylines)
-    if (this.isSupported('webgl')) {
-      return {
-        type: 'webgl',
-        reason: 'WebGL provides best performance with GPU acceleration'
-      };
-    }
-    
-    // Fallback to Canvas if WebGL not supported
+    // Canvas is the default and recommended renderer for v1.0
     if (this.isSupported('canvas')) {
       return {
         type: 'canvas',
-        reason: 'WebGL not supported - using Canvas renderer'
+        reason: 'Canvas renderer is stable and well-tested (v1.0 default)'
       };
     }
     
-    // Last resort fallback
+    // Fallback (should never reach here in browser environment)
     return {
       type: 'canvas',
-      reason: 'Canvas fallback (performance may be limited)'
+      reason: 'Canvas renderer (default)'
     };
   }
 }

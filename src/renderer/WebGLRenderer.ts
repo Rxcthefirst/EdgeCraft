@@ -2,7 +2,7 @@ import { GraphNode, GraphEdge, NodeStyle, EdgeStyle, PropertyNode } from '../typ
 import { IRenderer, RendererMetrics } from './IRenderer';
 import type { Graph } from '../core/Graph';
 import { WebGLShapeRenderer } from './WebGLShapeRenderer';
-import { WebGLTextureManager, TextureInfo } from './WebGLTextureManager';
+import { WebGLTextureManager } from './WebGLTextureManager';
 
 interface NodeVertex {
   x: number;
@@ -57,7 +57,7 @@ export class WebGLRenderer implements IRenderer {
   private nodes: Map<string | number, NodeVertex>;
   private edges: Map<string | number, EdgeVertex>;
   private glyphs: Map<string | number, GlyphVertex[]>; // Edge ID -> glyphs on that edge
-  private propertyNodes: Map<string | number, PropertyNode>;
+  private _propertyNodes: Map<string | number, PropertyNode>;
   private associationClasses: Map<string | number, {ac: any, nodeVertex: NodeVertex}>;
   private nodeStyles: Map<string | number, NodeStyle>;
   private edgeStyles: Map<string | number, EdgeStyle>;
@@ -106,7 +106,7 @@ export class WebGLRenderer implements IRenderer {
     this.nodes = new Map();
     this.edges = new Map();
     this.glyphs = new Map();
-    this.propertyNodes = new Map();
+    this._propertyNodes = new Map();
     this.associationClasses = new Map();
     this.nodeStyles = new Map();
     this.edgeStyles = new Map();
@@ -885,7 +885,7 @@ export class WebGLRenderer implements IRenderer {
    */
   private async loadNodeTexture(nodeId: string | number, imageConfig: NonNullable<NodeStyle['image']>): Promise<void> {
     try {
-      const textureInfo = await this.textureManager.loadTexture(imageConfig);
+      const _textureInfo = await this.textureManager.loadTexture(imageConfig);
       const nodeVertex = this.nodes.get(nodeId);
       if (nodeVertex) {
         nodeVertex.textureId = this.textureManager['getCacheKey'](imageConfig);
@@ -971,9 +971,6 @@ export class WebGLRenderer implements IRenderer {
   updateNode(id: string | number, updates: Partial<GraphNode>, style?: NodeStyle): void {
     const existing = this.nodes.get(id);
     if (existing) {
-      const oldX = existing.x;
-      const oldY = existing.y;
-      
       existing.x = (updates as any).x || existing.x;
       existing.y = (updates as any).y || existing.y;
       if (style) {
@@ -983,7 +980,7 @@ export class WebGLRenderer implements IRenderer {
       
       // Update all edges connected to this node if position changed
       if ((updates as any).x !== undefined || (updates as any).y !== undefined) {
-        this.edges.forEach((edgeVertex, edgeId) => {
+        this.edges.forEach((edgeVertex, _edgeId) => {
           if (edgeVertex.sourceId === id) {
             edgeVertex.x1 = existing.x;
             edgeVertex.y1 = existing.y;

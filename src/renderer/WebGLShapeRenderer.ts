@@ -107,7 +107,6 @@ export class WebGLShapeRenderer {
         // Hexagon has 6 sides at 60° intervals
         const hexAngle = ((angle + Math.PI / 2) % (Math.PI * 2) + Math.PI * 2) % (Math.PI * 2);
         const sideAngle = Math.floor(hexAngle / (Math.PI / 3)) * (Math.PI / 3);
-        const nextSideAngle = sideAngle + Math.PI / 3;
         
         // Interpolate between two sides
         const t = (hexAngle - sideAngle) / (Math.PI / 3);
@@ -124,7 +123,6 @@ export class WebGLShapeRenderer {
         // Star shape with 5 points
         const starAngle = ((angle + Math.PI / 2) % (Math.PI * 2) + Math.PI * 2) % (Math.PI * 2);
         const pointAngle = Math.floor(starAngle / (Math.PI * 2 / 5)) * (Math.PI * 2 / 5);
-        const nextPointAngle = pointAngle + Math.PI * 2 / 5;
         
         // Outer points vs inner valleys
         const isPoint = (starAngle - pointAngle) < (Math.PI / 5);

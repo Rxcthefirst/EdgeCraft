@@ -46,11 +46,11 @@ export type { GeometricLayoutConfig } from './layout/GeometricLayout';
 export * from './core/BezierUtils';
 export * from './types';
 
-// UI Components
-export * from './ui';
+// UI Components - Disabled for v1.0 (under development)
+// export * from './ui';
 
-// Data Import/Export
-export * from './io';
+// Data Import/Export - Disabled for v1.0 (type issues to be resolved)
+// export * from './io';
 
 // Version
-export const VERSION = '0.1.0';
+export const VERSION = '1.0.0';

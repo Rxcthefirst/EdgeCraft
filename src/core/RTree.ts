@@ -41,11 +41,11 @@ interface RTreeNode {
 export class RTree {
   private root!: RTreeNode; // Initialized in clear()
   private maxEntries: number;
-  private minEntries: number;
+  private _minEntries: number;
 
   constructor(maxEntries: number = 9) {
     this.maxEntries = Math.max(4, maxEntries);
-    this.minEntries = Math.max(2, Math.ceil(this.maxEntries * 0.4));
+    this._minEntries = Math.max(2, Math.ceil(this.maxEntries * 0.4));
     this.clear();
   }
 

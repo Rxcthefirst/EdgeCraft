@@ -1,6 +1,6 @@
 {
   "name": "edgecraft",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "type": "module",
   "description": "Advanced graph visualization library for RDF and LPG with sophisticated rendering capabilities",
   "main": "dist/index.js",
@@ -32,7 +32,7 @@
     "knowledge-graph",
     "semantic-web"
   ],
-  "author": "",
+  "author": "EdgeCraft Contributors",
   "license": "MIT",
   "devDependencies": {
     "@rollup/plugin-commonjs": "^25.0.7",
@@ -64,5 +64,8 @@
   "bugs": {
     "url": "https://github.com/yourusername/edgecraft/issues"
   },
-  "homepage": "https://github.com/yourusername/edgecraft#readme"
+  "homepage": "https://github.com/yourusername/edgecraft#readme",
+  "engines": {
+    "node": ">=16.0.0"
+  }
 }

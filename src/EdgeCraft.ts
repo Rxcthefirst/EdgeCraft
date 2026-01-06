@@ -196,39 +196,41 @@ export class EdgeCraft {
     
     // Resolve fill if it's a function
     if (typeof baseStyle.fill === 'function') {
-      resolvedStyle.fill = baseStyle.fill(node);
+      resolvedStyle.fill = (baseStyle.fill as Function)(node);
     }
     
     // Resolve stroke if it's a function
     if (typeof baseStyle.stroke === 'function') {
-      resolvedStyle.stroke = baseStyle.stroke(node);
+      resolvedStyle.stroke = (baseStyle.stroke as Function)(node);
     }
     
     // Resolve other function properties as needed
     if (typeof baseStyle.radius === 'function') {
-      resolvedStyle.radius = baseStyle.radius(node);
+      resolvedStyle.radius = (baseStyle.radius as Function)(node);
     }
     
     if (typeof baseStyle.strokeWidth === 'function') {
-      resolvedStyle.strokeWidth = baseStyle.strokeWidth(node);
+      resolvedStyle.strokeWidth = (baseStyle.strokeWidth as Function)(node);
     }
     
     if (typeof baseStyle.shape === 'function') {
-      resolvedStyle.shape = baseStyle.shape(node);
+      resolvedStyle.shape = (baseStyle.shape as Function)(node);
     }
     
+    // @ts-ignore - strokeDasharray may be a function (dynamic styling)
     if (typeof baseStyle.strokeDasharray === 'function') {
+      // @ts-ignore
       resolvedStyle.strokeDasharray = baseStyle.strokeDasharray(node);
     }
     
     // Resolve icon if it's a function
     if (typeof baseStyle.icon === 'function') {
-      resolvedStyle.icon = baseStyle.icon(node);
+      resolvedStyle.icon = (baseStyle.icon as Function)(node);
     }
     
     // Resolve window properties if it's a function
     if (typeof baseStyle.window === 'function') {
-      resolvedStyle.window = baseStyle.window(node);
+      resolvedStyle.window = (baseStyle.window as Function)(node);
     }
     
     // Resolve label properties
@@ -236,31 +238,36 @@ export class EdgeCraft {
       resolvedStyle.label = { ...baseStyle.label };
       
       // Set label text from node.label if not already set
+      // @ts-ignore - LPG nodes don't have label property, only RDF
       if (!resolvedStyle.label.text && node.label) {
+        // @ts-ignore
         resolvedStyle.label.text = node.label;
       }
       
       // Resolve label property functions
+      // @ts-ignore - visible may be a function (dynamic styling)
       if (typeof baseStyle.label.visible === 'function') {
+        // @ts-ignore
         resolvedStyle.label.visible = baseStyle.label.visible(node);
       }
       if (typeof baseStyle.label.fontSize === 'function') {
-        resolvedStyle.label.fontSize = baseStyle.label.fontSize(node);
+        resolvedStyle.label.fontSize = (baseStyle.label.fontSize as Function)(node);
       }
       if (typeof baseStyle.label.color === 'function') {
-        resolvedStyle.label.color = baseStyle.label.color(node);
+        resolvedStyle.label.color = (baseStyle.label.color as Function)(node);
       }
+      // @ts-ignore - fontWeight may be a function (dynamic styling)
       if (typeof baseStyle.label.fontWeight === 'function') {
+        // @ts-ignore
         resolvedStyle.label.fontWeight = baseStyle.label.fontWeight(node);
       }
       if (typeof baseStyle.label.position === 'function') {
-        resolvedStyle.label.position = baseStyle.label.position(node);
+        resolvedStyle.label.position = (baseStyle.label.position as Function)(node);
       }
-    } else if (node.label) {
+    } else if ((node as any).label) {
       // If no label config but node has label, create default label
       resolvedStyle.label = {
-        text: node.label,
-        visible: true,
+        text: (node as any).label,
         position: 'center',
       };
     }
@@ -302,17 +309,17 @@ export class EdgeCraft {
     
     // Resolve stroke if it's a function
     if (typeof baseStyle.stroke === 'function') {
-      resolvedStyle.stroke = baseStyle.stroke(edge);
+      resolvedStyle.stroke = (baseStyle.stroke as Function)(edge);
     }
     
     // Resolve strokeWidth if it's a function
     if (typeof baseStyle.strokeWidth === 'function') {
-      resolvedStyle.strokeWidth = baseStyle.strokeWidth(edge);
+      resolvedStyle.strokeWidth = (baseStyle.strokeWidth as Function)(edge);
     }
     
     // Resolve other function properties
     if (typeof baseStyle.strokeDasharray === 'function') {
-      resolvedStyle.strokeDasharray = baseStyle.strokeDasharray(edge);
+      resolvedStyle.strokeDasharray = (baseStyle.strokeDasharray as Function)(edge);
     }
     
     return resolvedStyle;

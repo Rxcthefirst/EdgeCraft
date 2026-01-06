@@ -251,7 +251,7 @@ export function getLayoutEngine(type: string): LayoutEngine {
     case 'radial':
       return {
         compute: (graph: Graph, config: LayoutConfig) => {
-          const layout = new RadialTreeLayout(config);
+          const layout = new RadialTreeLayout(config as any);
           return layout.compute(graph);
         }
       };
@@ -272,7 +272,7 @@ export function getLayoutEngine(type: string): LayoutEngine {
     case 'geometric':
       return {
         compute: (graph: Graph, config: LayoutConfig) => {
-          const layout = new GeometricLayout(config);
+          const layout = new GeometricLayout(config as any);
           return layout.compute(graph);
         }
       };

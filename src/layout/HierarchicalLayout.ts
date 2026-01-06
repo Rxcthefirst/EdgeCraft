@@ -195,7 +195,7 @@ export class HierarchicalLayout {
     };
 
     // Run DFS from all unvisited nodes
-    this.nodes.forEach((node, nodeId) => {
+    this.nodes.forEach((_node, nodeId) => {
       if (!visited.has(nodeId)) {
         dfs(nodeId);
       }

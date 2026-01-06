@@ -143,7 +143,7 @@ export class MultiEdgeBundler {
    * Calculate angle distribution for multiple self-loops on same node
    * Distributes loops evenly around the node to prevent overlap
    */
-  private calculateSelfLoopDistribution(edgeIds: EdgeId[], nodeId: NodeId): void {
+  private calculateSelfLoopDistribution(edgeIds: EdgeId[], _nodeId: NodeId): void {
     const count = edgeIds.length;
     
     if (count === 1) {
@@ -291,7 +291,7 @@ export class MultiEdgeBundler {
    * Get all edges in the same bundle as the given edge
    */
   getBundleEdges(edgeId: EdgeId): EdgeId[] {
-    for (const [key, edgeIds] of this.edgeBundles) {
+    for (const [_key, edgeIds] of this.edgeBundles) {
       if (edgeIds.includes(edgeId)) {
         return edgeIds;
       }

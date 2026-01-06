@@ -74,19 +74,6 @@ export interface CircularLayoutConfig {
 }
 
 /**
- * Internal node representation with layout info
- */
-interface CircularNode {
-  id: string | number;
-  node: GraphNode;
-  angle: number;
-  radius: number;
-  level?: number;
-  partition?: number;
-  degree?: number;
-}
-
-/**
  * Circular Layout Algorithm
  * 
  * Arranges nodes in circular patterns. Supports three layout types:

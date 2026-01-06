@@ -62,7 +62,7 @@ export class WebGLTextureManager {
   
   private async loadTextureInternal(
     imageConfig: any,
-    cacheKey: string
+    _cacheKey: string
   ): Promise<TextureInfo> {
     let image: HTMLImageElement;
     

@@ -26,10 +26,10 @@ export class InteractionManager {
   private dragStartPos: Position | null;
   private hasDragged: boolean = false;
   private hoveredNode: string | number | null;
-  private hoveredEdge: string | number | null;
+  private _hoveredEdge: string | number | null;
   private currentTransform: { x: number; y: number; scale: number };
-  private originalNodeStyles: Map<string | number, any>;
-  private originalEdgeStyles: Map<string | number, any>;
+  private _originalNodeStyles: Map<string | number, any>;
+  private _originalEdgeStyles: Map<string | number, any>;
   private boundHandlers: {
     mousedown?: (event: MouseEvent) => void;
     mousemove?: (event: MouseEvent) => void;
@@ -65,12 +65,12 @@ export class InteractionManager {
     this.draggedNode = null;
     this.dragStartPos = null;
     this.hoveredNode = null;
-    this.hoveredEdge = null;
+    this._hoveredEdge = null;
     this.boundHandlers = {};
     this.container = undefined;
     this.currentTransform = { x: 0, y: 0, scale: 1 };
-    this.originalNodeStyles = new Map();
-    this.originalEdgeStyles = new Map();
+    this._originalNodeStyles = new Map();
+    this._originalEdgeStyles = new Map();
     
     // Build edges map from graph
     this.edges = new Map();
@@ -1119,6 +1119,6 @@ export class InteractionManager {
     this.draggedNode = null;
     this.dragStartPos = null;
     this.hoveredNode = null;
-    this.hoveredEdge = null;
+    this._hoveredEdge = null;
   }
 }
